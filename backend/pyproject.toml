@@ -1,0 +1,19 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "pie-slice API — FastAPI implementation of ../openapi.yaml"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic[email]>=2.9.0",
+    "bcrypt>=4.2.0",
+    "sqlalchemy>=2.0.35",
+    "python-dotenv>=1.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "httpx>=0.27.0",
+]

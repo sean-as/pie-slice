@@ -1,0 +1,398 @@
+"""
+Data-access layer — every router calls methods on the single `store`
+instance below and never touches SQLAlchemy directly. Each method opens its
+own short-lived session, converts ORM rows to the same Pydantic schemas
+used everywhere else in the app (models.py), and returns those — so this
+file is the *only* place that knows a database is involved at all.
+
+This used to be plain in-memory dicts; the public API is unchanged, so
+nothing in routers/ or auth.py had to change when it was swapped for
+SQLAlchemy underneath.
+"""
+
+from __future__ import annotations
+
+import secrets
+import uuid
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db import Base, SessionLocal, engine
+from app.db_models import ExpenseRow, ExpenseSplitRow, GroupRow, MemberRow, SettlementRow, TokenRow, UserRow
+from app.models import Expense, Group, Member, Settlement, Split, User
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
+@dataclass
+class StoredUser:
+    """Internal representation carrying the password hash — never sent to the client (see User in models.py)."""
+
+    id: str
+    email: str
+    display_name: str
+    password_hash: str
+
+    def to_public(self) -> User:
+        return User(id=self.id, email=self.email, display_name=self.display_name)
+
+
+def _user_row_to_stored(row: UserRow) -> StoredUser:
+    return StoredUser(id=row.id, email=row.email, display_name=row.display_name, password_hash=row.password_hash)
+
+
+def _member_row_to_pydantic(row: MemberRow) -> Member:
+    return Member(id=row.id, display_name=row.display_name, user_id=row.user_id)
+
+
+def _expense_row_to_pydantic(row: ExpenseRow) -> Expense:
+    return Expense(
+        id=row.id,
+        group_id=row.group_id,
+        description=row.description,
+        amount_cents=row.amount_cents,
+        payer_id=row.payer_id,
+        date=row.date,
+        split_method=row.split_method,
+        splits=[Split(member_id=s.member_id, amount_cents=s.amount_cents) for s in row.splits],
+        created_by_user_id=row.created_by_user_id,
+    )
+
+
+def _settlement_row_to_pydantic(row: SettlementRow) -> Settlement:
+    return Settlement(
+        id=row.id,
+        group_id=row.group_id,
+        from_member_id=row.from_member_id,
+        to_member_id=row.to_member_id,
+        amount_cents=row.amount_cents,
+        date=row.date,
+        method=row.method,
+        created_by_user_id=row.created_by_user_id,
+    )
+
+
+def _group_by_id(session: Session, group_id: str) -> GroupRow | None:
+    return session.execute(select(GroupRow).where(GroupRow.id == group_id)).scalar_one_or_none()
+
+
+def _group_row_to_pydantic(row: GroupRow) -> Group:
+    return Group(id=row.id, name=row.name, members=[_member_row_to_pydantic(m) for m in row.members])
+
+
+class Store:
+    # ---- users ----
+
+    def find_user_by_email(self, email: str) -> StoredUser | None:
+        normalized = email.strip().lower()
+        with SessionLocal() as session:
+            row = session.execute(select(UserRow).where(UserRow.email == normalized)).scalar_one_or_none()
+            return _user_row_to_stored(row) if row else None
+
+    def create_user(self, email: str, display_name: str, password_hash: str) -> StoredUser:
+        with SessionLocal() as session:
+            row = UserRow(
+                id=new_id(),
+                email=email.strip().lower(),
+                display_name=display_name.strip(),
+                password_hash=password_hash,
+            )
+            session.add(row)
+            session.commit()
+            return _user_row_to_stored(row)
+
+    def get_user(self, user_id: str) -> StoredUser | None:
+        with SessionLocal() as session:
+            row = session.execute(select(UserRow).where(UserRow.id == user_id)).scalar_one_or_none()
+            return _user_row_to_stored(row) if row else None
+
+    # ---- tokens ----
+
+    def issue_token(self, user_id: str) -> str:
+        token = secrets.token_hex(32)
+        with SessionLocal() as session:
+            session.add(TokenRow(token=token, user_id=user_id))
+            session.commit()
+        return token
+
+    def user_id_for_token(self, token: str) -> str | None:
+        with SessionLocal() as session:
+            row = session.execute(select(TokenRow).where(TokenRow.token == token)).scalar_one_or_none()
+            return row.user_id if row else None
+
+    def revoke_token(self, token: str) -> None:
+        with SessionLocal() as session:
+            row = session.execute(select(TokenRow).where(TokenRow.token == token)).scalar_one_or_none()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    # ---- groups & membership ----
+
+    def is_linked_member(self, group: Group | None, user_id: str) -> bool:
+        return group is not None and any(m.user_id == user_id for m in group.members)
+
+    def get_group_for_member(self, group_id: str, user_id: str) -> Group | None:
+        """None for both 'doesn't exist' and 'exists but you're not a member' — never leak which."""
+        with SessionLocal() as session:
+            row = _group_by_id(session, group_id)
+            if row is None:
+                return None
+            group = _group_row_to_pydantic(row)
+            return group if self.is_linked_member(group, user_id) else None
+
+    def groups_for_user(self, user_id: str) -> list[Group]:
+        with SessionLocal() as session:
+            member_group_ids = (
+                session.execute(select(MemberRow.group_id).where(MemberRow.user_id == user_id)).scalars().all()
+            )
+            rows = (
+                session.execute(select(GroupRow).where(GroupRow.id.in_(member_group_ids)).order_by(GroupRow.pk))
+                .scalars()
+                .all()
+            )
+            return [_group_row_to_pydantic(r) for r in rows]
+
+    def create_group(self, name: str, creator: StoredUser) -> Group:
+        with SessionLocal() as session:
+            group_row = GroupRow(id=new_id(), name=name)
+            session.add(group_row)
+            session.flush()
+            session.add(
+                MemberRow(id=new_id(), group_id=group_row.id, display_name=creator.display_name, user_id=creator.id)
+            )
+            session.commit()
+            session.refresh(group_row)
+            return _group_row_to_pydantic(group_row)
+
+    def add_linked_member(self, group_id: str, target: StoredUser) -> Group:
+        with SessionLocal() as session:
+            session.add(
+                MemberRow(id=new_id(), group_id=group_id, display_name=target.display_name, user_id=target.id)
+            )
+            session.commit()
+            row = _group_by_id(session, group_id)
+            return _group_row_to_pydantic(row) if row else None  # type: ignore[return-value]
+
+    def add_placeholder_member(self, group_id: str, display_name: str) -> Group:
+        with SessionLocal() as session:
+            session.add(MemberRow(id=new_id(), group_id=group_id, display_name=display_name, user_id=None))
+            session.commit()
+            row = _group_by_id(session, group_id)
+            return _group_row_to_pydantic(row) if row else None  # type: ignore[return-value]
+
+    # ---- expenses ----
+
+    def list_expenses(self, group_id: str) -> list[Expense]:
+        with SessionLocal() as session:
+            rows = (
+                session.execute(select(ExpenseRow).where(ExpenseRow.group_id == group_id).order_by(ExpenseRow.pk))
+                .scalars()
+                .all()
+            )
+            return [_expense_row_to_pydantic(r) for r in rows]
+
+    def add_expense(self, expense: Expense) -> None:
+        with SessionLocal() as session:
+            row = ExpenseRow(
+                id=expense.id,
+                group_id=expense.group_id,
+                description=expense.description,
+                amount_cents=expense.amount_cents,
+                payer_id=expense.payer_id,
+                date=expense.date,
+                split_method=expense.split_method,
+                created_by_user_id=expense.created_by_user_id,
+            )
+            row.splits = [
+                ExpenseSplitRow(member_id=s.member_id, amount_cents=s.amount_cents) for s in expense.splits
+            ]
+            session.add(row)
+            session.commit()
+
+    def find_expense(self, group_id: str, expense_id: str) -> Expense | None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(ExpenseRow).where(ExpenseRow.group_id == group_id, ExpenseRow.id == expense_id)
+            ).scalar_one_or_none()
+            return _expense_row_to_pydantic(row) if row else None
+
+    def replace_expense(self, group_id: str, expense_id: str, updated: Expense) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(ExpenseRow).where(ExpenseRow.group_id == group_id, ExpenseRow.id == expense_id)
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            row.description = updated.description
+            row.amount_cents = updated.amount_cents
+            row.payer_id = updated.payer_id
+            row.date = updated.date
+            row.split_method = updated.split_method
+            row.splits = [
+                ExpenseSplitRow(member_id=s.member_id, amount_cents=s.amount_cents) for s in updated.splits
+            ]
+            session.commit()
+
+    def delete_expense(self, group_id: str, expense_id: str) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(ExpenseRow).where(ExpenseRow.group_id == group_id, ExpenseRow.id == expense_id)
+            ).scalar_one_or_none()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    # ---- settlements ----
+
+    def list_settlements(self, group_id: str) -> list[Settlement]:
+        with SessionLocal() as session:
+            rows = (
+                session.execute(
+                    select(SettlementRow).where(SettlementRow.group_id == group_id).order_by(SettlementRow.pk)
+                )
+                .scalars()
+                .all()
+            )
+            return [_settlement_row_to_pydantic(r) for r in rows]
+
+    def add_settlement(self, settlement: Settlement) -> None:
+        with SessionLocal() as session:
+            session.add(
+                SettlementRow(
+                    id=settlement.id,
+                    group_id=settlement.group_id,
+                    from_member_id=settlement.from_member_id,
+                    to_member_id=settlement.to_member_id,
+                    amount_cents=settlement.amount_cents,
+                    date=settlement.date,
+                    method=settlement.method,
+                    created_by_user_id=settlement.created_by_user_id,
+                )
+            )
+            session.commit()
+
+    def find_settlement(self, group_id: str, settlement_id: str) -> Settlement | None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(SettlementRow).where(SettlementRow.group_id == group_id, SettlementRow.id == settlement_id)
+            ).scalar_one_or_none()
+            return _settlement_row_to_pydantic(row) if row else None
+
+    def replace_settlement(self, group_id: str, settlement_id: str, updated: Settlement) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(SettlementRow).where(SettlementRow.group_id == group_id, SettlementRow.id == settlement_id)
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            row.from_member_id = updated.from_member_id
+            row.to_member_id = updated.to_member_id
+            row.amount_cents = updated.amount_cents
+            row.date = updated.date
+            row.method = updated.method
+            session.commit()
+
+    def delete_settlement(self, group_id: str, settlement_id: str) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(SettlementRow).where(SettlementRow.group_id == group_id, SettlementRow.id == settlement_id)
+            ).scalar_one_or_none()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    # ---- test/dev helper ----
+
+    def reset(self) -> None:
+        """Drops and recreates every table — used by tests for isolation between cases."""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+
+store = Store()
+
+
+def seed(target: Store | None = None) -> None:
+    """
+    Populates demo data so the API has something to show out of the box.
+    A no-op if it looks like this has already run — with a persistent
+    (file/Postgres) database this is called on every server start, and
+    re-inserting alice@example.com would otherwise crash on the unique
+    email constraint.
+    """
+    from datetime import date
+
+    from app.auth import hash_password
+    from app.domain import resolve_splits
+    from app.models import EqualSplitInput, SharesSplitInput
+
+    s = target if target is not None else store
+
+    if s.find_user_by_email("alice@example.com") is not None:
+        return
+
+    alice = s.create_user("alice@example.com", "Alice", hash_password("password123"))
+    bob = s.create_user("bob@example.com", "Bob", hash_password("password123"))
+
+    group = s.create_group("Cabin Trip", alice)
+    group = s.add_linked_member(group.id, bob)
+    group = s.add_placeholder_member(group.id, "Carol")
+
+    alice_member = next(m for m in group.members if m.user_id == alice.id)
+    bob_member = next(m for m in group.members if m.user_id == bob.id)
+    carol_member = next(m for m in group.members if m.display_name == "Carol")
+
+    groceries = Expense(
+        id=new_id(),
+        group_id=group.id,
+        description="Groceries",
+        amount_cents=6000,
+        payer_id=alice_member.id,
+        date=date(2026, 8, 20),
+        split_method="equal",
+        splits=resolve_splits(
+            6000, EqualSplitInput(method="equal", member_ids=[alice_member.id, bob_member.id, carol_member.id])
+        ),
+        created_by_user_id=alice.id,
+    )
+    s.add_expense(groceries)
+
+    cabin_rental = Expense(
+        id=new_id(),
+        group_id=group.id,
+        description="Cabin rental",
+        amount_cents=30000,
+        payer_id=bob_member.id,
+        date=date(2026, 8, 21),
+        split_method="shares",
+        splits=resolve_splits(
+            30000,
+            SharesSplitInput(
+                method="shares",
+                shares=[
+                    {"memberId": alice_member.id, "shares": 1},
+                    {"memberId": bob_member.id, "shares": 1},
+                    {"memberId": carol_member.id, "shares": 1},
+                ],
+            ),
+        ),
+        created_by_user_id=bob.id,
+    )
+    s.add_expense(cabin_rental)
+
+    settlement = Settlement(
+        id=new_id(),
+        group_id=group.id,
+        from_member_id=carol_member.id,
+        to_member_id=alice_member.id,
+        amount_cents=2000,
+        date=date(2026, 8, 22),
+        method="Venmo",
+        created_by_user_id=alice.id,
+    )
+    s.add_settlement(settlement)

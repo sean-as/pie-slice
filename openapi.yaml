@@ -1,0 +1,972 @@
+openapi: 3.1.0
+info:
+  title: pie-slice API
+  version: 0.2.0
+  description: |
+    Backend the `frontend/` React app expects, derived directly from
+    `frontend/src/services/types.ts` (the `ExpenseServiceApi` interface —
+    the single boundary every UI call crosses) and
+    `frontend/src/services/mockService.ts` (the no-backend reference
+    implementation this spec must behave identically to).
+
+    ## Authentication
+
+    Real accounts: email + password, bearer tokens. `POST /auth/signup`
+    and `POST /auth/login` are the only unauthenticated endpoints; every
+    other endpoint requires `Authorization: Bearer <token>`, obtained from
+    either of those two.
+
+    Beyond "is this a valid token," authorization is enforced per
+    product-spec.md:
+    - **Group access**: only a *linked* member of a group may view or act
+      on it. A request for a group you're not a linked member of gets the
+      same `404` as a group that doesn't exist — existence is never
+      leaked to non-members.
+    - **Edit/delete on an expense or settlement**: only the user who
+      created it (`createdByUserId`) may edit or delete it — enforced
+      with `403`, checked server-side on every request, never trusted
+      from the client.
+
+servers:
+  - url: /api
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+    description: Signup, login, and the current session.
+  - name: groups
+    description: Create/read groups and manage membership (linked accounts and placeholders).
+  - name: expenses
+    description: Log, edit, and delete shared expenses within a group.
+  - name: settlements
+    description: Record, edit, and delete payments made to settle a debt.
+  - name: balances
+    description: Read-only computed balances and settle-up suggestions.
+
+paths:
+  /auth/signup:
+    post:
+      tags: [auth]
+      operationId: signup
+      summary: Create an account
+      description: Maps to `ExpenseServiceApi.signup`. Unauthenticated. Returns a bearer token for immediate use.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupInput"
+      responses:
+        "201":
+          description: Account created and logged in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "409":
+          description: An account with that email already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log in
+      description: >
+        Maps to `ExpenseServiceApi.login`. Unauthenticated. A wrong email
+        or wrong password both produce the same `401` with the same
+        generic message — never reveals whether the email exists.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Logged in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid email or password (generic — see description above).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Log out
+      description: Maps to `ExpenseServiceApi.logout`. Invalidates the bearer token used to call it.
+      responses:
+        "204":
+          description: Logged out.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: getCurrentUser
+      summary: Get the current user
+      description: >
+        Maps to `ExpenseServiceApi.getCurrentUser`. Note the client
+        contract returns `null` rather than erroring when logged out
+        (`Promise<User | null>`) — but that check happens client-side by
+        not calling this endpoint without a stored token. Called with no
+        token, or an invalid/expired one, this endpoint itself still
+        returns `401` like any other protected endpoint.
+      responses:
+        "200":
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /groups:
+    get:
+      tags: [groups]
+      operationId: listGroups
+      summary: List the current user's groups
+      description: Maps to `ExpenseServiceApi.listGroups`. Groups the current user is a linked member of — nothing else.
+      responses:
+        "200":
+          description: Groups the current user belongs to.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [groups]
+      operationId: createGroup
+      summary: Create a group
+      description: >
+        Maps to `ExpenseServiceApi.createGroup`. The current user becomes
+        the group's first linked member automatically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupInput"
+      responses:
+        "201":
+          description: Group created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /groups/{groupId}:
+    get:
+      tags: [groups]
+      operationId: getGroup
+      summary: Get a group
+      description: >
+        Maps to `ExpenseServiceApi.getGroup`. `404` for both "doesn't
+        exist" and "exists but you're not a linked member" — see
+        Authentication above.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group found and you're a linked member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /groups/{groupId}/members/linked:
+    post:
+      tags: [groups]
+      operationId: addLinkedMember
+      summary: Add an existing user as a member
+      description: >
+        Maps to `ExpenseServiceApi.addLinkedMember`. Looks the user up by
+        exact email — they must already have an account (see
+        product-spec.md non-goals: no pending invites for unregistered
+        emails). Returns the updated group.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLinkedMemberInput"
+      responses:
+        "200":
+          description: Member added; full group returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The group doesn't exist/you're not a member, OR no account exists for that email (see `detail` to distinguish).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: That user is already a member of this group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /groups/{groupId}/members/placeholder:
+    post:
+      tags: [groups]
+      operationId: addPlaceholderMember
+      summary: Add a name-only member with no account
+      description: Maps to `ExpenseServiceApi.addPlaceholderMember`. Returns the updated group.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPlaceholderMemberInput"
+      responses:
+        "200":
+          description: Member added; full group returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /groups/{groupId}/expenses:
+    get:
+      tags: [expenses]
+      operationId: listExpenses
+      summary: List a group's expenses
+      description: Maps to `ExpenseServiceApi.listExpenses`.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: All expenses for the group.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Expense"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [expenses]
+      operationId: addExpense
+      summary: Add an expense
+      description: >
+        Maps to `ExpenseServiceApi.addExpense`. The server resolves
+        `splitInput` into final per-member cents (see
+        `frontend/src/domain/splitting.ts` for the exact algorithm: largest-
+        remainder distribution for equal/percent/shares, direct
+        pass-through with a sum check for exact) and stores that resolved
+        `splits` array — the client never computes final splits itself.
+        `createdByUserId` on the response is always the caller — it is
+        never accepted as a request field. Any linked member may add an
+        expense (payer/split participants may include placeholders).
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseInput"
+      responses:
+        "201":
+          description: Expense created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Expense"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/SplitValidationError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /groups/{groupId}/expenses/{expenseId}:
+    put:
+      tags: [expenses]
+      operationId: updateExpense
+      summary: Update an expense
+      description: >
+        Maps to `ExpenseServiceApi.updateExpense`. Full replacement of all
+        fields (matches `UpdateExpenseInput = AddExpenseInput` in the
+        client). **Creator-only** — see Authentication above.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+        - $ref: "#/components/parameters/ExpenseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseInput"
+      responses:
+        "200":
+          description: Expense updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Expense"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/NotCreator"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/SplitValidationError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [expenses]
+      operationId: deleteExpense
+      summary: Delete an expense
+      description: Maps to `ExpenseServiceApi.deleteExpense`. **Creator-only** — see Authentication above.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+        - $ref: "#/components/parameters/ExpenseId"
+      responses:
+        "204":
+          description: Expense deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/NotCreator"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /groups/{groupId}/settlements:
+    get:
+      tags: [settlements]
+      operationId: listSettlements
+      summary: List a group's settlements
+      description: Maps to `ExpenseServiceApi.listSettlements`.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: All settlements for the group.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Settlement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [settlements]
+      operationId: addSettlement
+      summary: Record a settlement
+      description: >
+        Maps to `ExpenseServiceApi.addSettlement`. Records that
+        `fromMemberId` paid `toMemberId`; balances shift accordingly (see
+        `/groups/{groupId}/balances`). Not gated on the settle-up
+        suggestion — any from/to/amount combination is accepted.
+        `createdByUserId` on the response is always the caller.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettlementInput"
+      responses:
+        "201":
+          description: Settlement recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settlement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /groups/{groupId}/settlements/{settlementId}:
+    put:
+      tags: [settlements]
+      operationId: updateSettlement
+      summary: Update a settlement
+      description: >
+        Maps to `ExpenseServiceApi.updateSettlement`. Full replacement,
+        matches `UpdateSettlementInput = AddSettlementInput`.
+        **Creator-only** — see Authentication above.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+        - $ref: "#/components/parameters/SettlementId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettlementInput"
+      responses:
+        "200":
+          description: Settlement updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settlement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/NotCreator"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [settlements]
+      operationId: deleteSettlement
+      summary: Delete a settlement
+      description: Maps to `ExpenseServiceApi.deleteSettlement`. **Creator-only** — see Authentication above.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+        - $ref: "#/components/parameters/SettlementId"
+      responses:
+        "204":
+          description: Settlement deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/NotCreator"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /groups/{groupId}/balances:
+    get:
+      tags: [balances]
+      operationId: getBalances
+      summary: Get computed balances and settle-up suggestions
+      description: >
+        Maps to `ExpenseServiceApi.getBalances`. Must be a pure function of
+        the group's current expenses and settlements — never a stored
+        running total (product-spec.md technical constraints) — computed
+        exactly as `frontend/src/domain/balances.ts` does: net balance per
+        member, then a greedy largest-creditor/largest-debtor debt
+        simplification for `settleUp` (not a raw pairwise matrix, and not
+        guaranteed to be the globally minimal transaction count).
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Current balances and settle-up suggestions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalancesResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token returned by `POST /auth/signup` or `POST /auth/login`.
+
+  parameters:
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExpenseId:
+      name: expenseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SettlementId:
+      name: settlementId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or expired bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        The group (or the expense/settlement within it) does not exist,
+        or you're not a linked member of the group. Mirrors the mock's
+        `getGroup` returning `null` / other methods throwing "not found"
+        errors — see Authentication above for why membership and
+        existence collapse to the same response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotCreator:
+      description: You are not the user who created this expense/settlement, so you may not edit or delete it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationError:
+      description: >
+        Request body failed schema validation (FastAPI's standard
+        automatic pydantic validation error format).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HTTPValidationError"
+    SplitValidationError:
+      description: >
+        The split itself is invalid — e.g. exact amounts don't sum to the
+        expense total, percentages don't sum to 100, shares aren't
+        positive whole numbers, or no members were selected. Mirrors
+        `SplitValidationError` thrown by `frontend/src/domain/splitting.ts`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          example: "Percentages sum to 90%, but must sum to 100%."
+
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  type: string
+              msg:
+                type: string
+              type:
+                type: string
+
+    User:
+      description: Never carries a password or password hash — this is the shape returned to the client.
+      type: object
+      required: [id, email, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+
+    SignupInput:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+          minLength: 1
+
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [user, token]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        token:
+          type: string
+          description: "Opaque bearer token — pass as `Authorization: Bearer <token>` on every subsequent request."
+
+    Member:
+      description: >
+        Linked to a real account (userId set — that user can log in and
+        act on the group) or a placeholder (userId null — just a name).
+      type: object
+      required: [id, displayName, userId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        userId:
+          type: [string, "null"]
+          format: uuid
+
+    Group:
+      type: object
+      required: [id, name, members]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/Member"
+
+    CreateGroupInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    AddLinkedMemberInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    AddPlaceholderMemberInput:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+
+    SplitMethod:
+      type: string
+      enum: [equal, exact, percent, shares]
+
+    Split:
+      description: Final resolved per-member cents — always present on a stored Expense regardless of splitMethod.
+      type: object
+      required: [memberId, amountCents]
+      properties:
+        memberId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+          description: Integer cents. Never a float — see product-spec.md's money-handling constraint.
+
+    SplitInput:
+      description: >
+        Discriminated union matching `AddExpenseInput["splitInput"]` in
+        services/types.ts. The server resolves this into the final
+        `Split[]` stored on the Expense (see splitting.ts for the exact
+        algorithm per method).
+      oneOf:
+        - $ref: "#/components/schemas/EqualSplitInput"
+        - $ref: "#/components/schemas/ExactSplitInput"
+        - $ref: "#/components/schemas/PercentSplitInput"
+        - $ref: "#/components/schemas/SharesSplitInput"
+      discriminator:
+        propertyName: method
+        mapping:
+          equal: "#/components/schemas/EqualSplitInput"
+          exact: "#/components/schemas/ExactSplitInput"
+          percent: "#/components/schemas/PercentSplitInput"
+          shares: "#/components/schemas/SharesSplitInput"
+
+    EqualSplitInput:
+      type: object
+      required: [method, memberIds]
+      properties:
+        method:
+          type: string
+          enum: [equal]
+        memberIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+
+    ExactSplitInput:
+      type: object
+      required: [method, amounts]
+      properties:
+        method:
+          type: string
+          enum: [exact]
+        amounts:
+          type: array
+          minItems: 1
+          description: Sum of amountCents across all entries must equal the expense's amountCents exactly.
+          items:
+            type: object
+            required: [memberId, amountCents]
+            properties:
+              memberId:
+                type: string
+                format: uuid
+              amountCents:
+                type: integer
+
+    PercentSplitInput:
+      type: object
+      required: [method, percentages]
+      properties:
+        method:
+          type: string
+          enum: [percent]
+        percentages:
+          type: array
+          minItems: 1
+          description: Sum of percent across all entries must equal 100 (within 0.01 tolerance).
+          items:
+            type: object
+            required: [memberId, percent]
+            properties:
+              memberId:
+                type: string
+                format: uuid
+              percent:
+                type: number
+
+    SharesSplitInput:
+      type: object
+      required: [method, shares]
+      properties:
+        method:
+          type: string
+          enum: [shares]
+        shares:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [memberId, shares]
+            properties:
+              memberId:
+                type: string
+                format: uuid
+              shares:
+                type: integer
+                minimum: 1
+
+    ExpenseInput:
+      description: Request body shared by create (POST) and full-replacement update (PUT). Matches AddExpenseInput / UpdateExpenseInput in services/types.ts.
+      type: object
+      required: [description, amountCents, payerId, date, splitMethod, splitInput]
+      properties:
+        description:
+          type: string
+        amountCents:
+          type: integer
+          exclusiveMinimum: 0
+        payerId:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        splitMethod:
+          $ref: "#/components/schemas/SplitMethod"
+        splitInput:
+          $ref: "#/components/schemas/SplitInput"
+
+    Expense:
+      type: object
+      required: [id, groupId, description, amountCents, payerId, date, splitMethod, splits, createdByUserId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        groupId:
+          type: string
+          format: uuid
+        description:
+          type: string
+        amountCents:
+          type: integer
+        payerId:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        splitMethod:
+          $ref: "#/components/schemas/SplitMethod"
+        splits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Split"
+        createdByUserId:
+          type: string
+          format: uuid
+          description: Whoever was logged in when this was created — only they may edit/delete it.
+
+    SettlementInput:
+      description: Request body shared by create (POST) and full-replacement update (PUT). Matches AddSettlementInput / UpdateSettlementInput in services/types.ts.
+      type: object
+      required: [fromMemberId, toMemberId, amountCents, date]
+      properties:
+        fromMemberId:
+          type: string
+          format: uuid
+        toMemberId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+          exclusiveMinimum: 0
+        date:
+          type: string
+          format: date
+        method:
+          type: string
+          description: Optional free-text payment method, e.g. "Venmo", "cash".
+
+    Settlement:
+      type: object
+      required: [id, groupId, fromMemberId, toMemberId, amountCents, date, createdByUserId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        groupId:
+          type: string
+          format: uuid
+        fromMemberId:
+          type: string
+          format: uuid
+        toMemberId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+        date:
+          type: string
+          format: date
+        method:
+          type: string
+        createdByUserId:
+          type: string
+          format: uuid
+          description: Whoever was logged in when this was created — only they may edit/delete it.
+
+    MemberBalance:
+      type: object
+      required: [memberId, netCents]
+      properties:
+        memberId:
+          type: string
+          format: uuid
+        netCents:
+          type: integer
+          description: Positive = owed money by the group, negative = owes the group.
+
+    SettleUpTransfer:
+      type: object
+      required: [fromMemberId, toMemberId, amountCents]
+      properties:
+        fromMemberId:
+          type: string
+          format: uuid
+        toMemberId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+          exclusiveMinimum: 0
+
+    BalancesResult:
+      type: object
+      required: [balances, settleUp]
+      properties:
+        balances:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberBalance"
+        settleUp:
+          type: array
+          items:
+            $ref: "#/components/schemas/SettleUpTransfer"

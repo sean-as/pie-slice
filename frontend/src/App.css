@@ -1,0 +1,190 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #fafafa;
+  color: #1a1a1a;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.site-header {
+  border-bottom: 1px solid #e0e0e0;
+  background: #fff;
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: #1a1a1a;
+}
+
+.header-user {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #4f46e5;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.content {
+  flex: 1;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-top: 2rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+input,
+select {
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #4f46e5;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: transparent;
+  color: #4f46e5;
+  border: 1px solid #4f46e5;
+}
+
+button.danger {
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #b91c1c;
+}
+
+.error {
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+ul.list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.card .meta {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.balance-positive {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.balance-negative {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.balance-zero {
+  color: #666;
+}
+
+.split-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.split-row label {
+  flex: 1;
+  font-weight: 400;
+}
+
+.split-row .split-value {
+  width: 90px;
+}
+
+.inline-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.share-link {
+  font-family: monospace;
+  background: #f0f0f0;
+  padding: 0.5rem;
+  border-radius: 6px;
+  word-break: break-all;
+  font-size: 0.85rem;
+}
