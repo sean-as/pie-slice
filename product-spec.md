@@ -22,6 +22,13 @@ up, log in, and see the groups you're in.
 - Every expense and settlement records **who (which logged-in user)
   created it**. Only that user can edit or delete it.
 - Single currency: **USD only**.
+- A user can **upload a CSV of their own credit card transactions** into a
+  group to turn recurring bills (utilities, gas, groceries) into expenses
+  without typing them in one at a time. Each person keeps their own
+  per-group list of merchants they've chosen to always include; on their
+  next upload to that group, matching transactions become expenses
+  automatically, and anything new is presented for a one-time decision.
+  No bank connection (e.g. Plaid) — CSV only, see Non-goals.
 
 ## User stories
 
@@ -56,6 +63,22 @@ up, log in, and see the groups you're in.
     computed balances accordingly.
 14. As the user who recorded a given settlement, I can edit or delete it.
     Other members cannot.
+15. As a linked member of a group, I can upload a CSV of my own credit card
+    transactions (date, description, amount) into that group.
+16. Upon upload, transactions from merchants I've previously chosen to
+    always include *in this group* become expenses automatically — no
+    per-transaction confirmation.
+17. For transactions from merchants I haven't decided on yet, I'm shown
+    them and choose, per transaction: import it once as a **one-off**
+    (doesn't change future uploads), or **always include this merchant**
+    (imports this transaction and remembers the merchant so future uploads
+    of mine to this group auto-include it).
+18. My remembered merchants are mine alone — they don't affect what
+    another member sees when they upload their own CSV, even to the same
+    group, and don't carry over to a different group I'm in.
+19. Expenses created from a CSV import behave exactly like any other
+    expense: equal split across current group members, included in
+    balances, and editable/deletable only by me (the importer).
 
 ## Acceptance criteria
 
@@ -136,6 +159,37 @@ up, log in, and see the groups you're in.
   floating-point currency math anywhere in the split/balance logic
   (prevents rounding-error drift across many expenses).
 
+**CSV import**
+- Expected file format: a header row followed by rows of `date,
+  description, amount` (see Technical constraints for the exact grammar).
+  Only rows with a positive amount are considered — zero/negative rows
+  (payments, credits, refunds) are silently skipped, not imported and not
+  shown for a decision.
+- "Merchant" = the transaction's `description` field. Matching against a
+  remembered merchant is on that field (exact/normalized match — see Open
+  / not yet decided for how forgiving that normalization is).
+- The remembered-merchant list is scoped to **(uploading user, group)** —
+  see user story 18.
+- On upload, every row is bucketed into exactly one of:
+  1. **Matches a remembered merchant** for this (user, group) → becomes an
+     expense immediately, no confirmation.
+  2. **Doesn't match** → shown to the user, who must choose "one-off" or
+     "always include this merchant" before it's imported; if they do
+     nothing for a row, it is not imported.
+- Choosing "always include this merchant" imports every matching
+  transaction in *this* upload and adds the merchant to the user's
+  remembered list for this group (so it auto-imports on the *next*
+  upload, not retroactively on past ones).
+- Every imported expense: `description` = the transaction's description,
+  `amountCents` = the transaction's amount, `payerId` = the uploader's own
+  member record in the group, `date` = the transaction's date,
+  `splitMethod` = equal across all current group members, `createdByUserId`
+  = the uploader. Identical in every other respect to a manually-logged
+  expense (creator-only edit/delete, appears in balances, etc.).
+- Re-uploading a file (or an overlapping date range) must not create
+  duplicate expenses for a transaction already imported — see Technical
+  constraints for the dedupe rule.
+
 ## Non-goals (this version)
 
 - Inviting someone by email who doesn't have an account yet (a "pending
@@ -151,9 +205,27 @@ up, log in, and see the groups you're in.
 - Deleting or archiving an entire group.
 - Transferring or sharing "creator" status on an expense/settlement — it's
   permanently whoever logged it (no reassignment, no admin override).
-- Receipt photo attachments, categories/tags, or recurring expenses.
+- Receipt photo attachments, categories/tags, or recurring expenses
+  configured outside of CSV import.
 - Notifications, reminders, or emails of any kind.
 - Native mobile app — web only.
+- Bank/card account aggregation (Plaid or similar) — CSV upload only, no
+  live bank connection, no stored bank credentials of any kind.
+- Configurable CSV column mapping — one fixed date/description/amount
+  format (see Technical constraints); reformatting a bank's export to
+  match is on the user.
+- Per-merchant custom split method/ratio — CSV-imported expenses are
+  always equal-split (like any new expense); edit afterward if a specific
+  one needs a different split.
+- Un-remembering a merchant, or any UI to view/manage the remembered-
+  merchant list directly — once remembered, it auto-imports every future
+  upload to that group; the only undo is deleting the resulting expenses
+  after the fact.
+- Fuzzy/approximate merchant matching (e.g. treating "AMAZON.COM*A1B2C"
+  and "AMAZON MKTPLACE" as the same merchant) — matching is on the literal
+  (normalized) description string.
+- Retaining the uploaded CSV file itself after processing — only the
+  resulting expenses are stored.
 
 ## Technical constraints
 
@@ -180,6 +252,28 @@ up, log in, and see the groups you're in.
 - Must work on mobile browsers (responsive), even though there's no
   native app.
 
+**CSV import**
+- CSV grammar: header row required, columns `date` (ISO `YYYY-MM-DD`),
+  `description` (free text), `amount` (plain decimal dollars, e.g.
+  `42.50`; positive = charge). Header names matched case-insensitively;
+  column order not assumed to be fixed as long as headers are present.
+- Cell contents are always treated as plain text, never evaluated —
+  standard CSV/spreadsheet formula-injection protection (a `description`
+  starting with `=`, `+`, `-`, or `@` must not be treated specially by
+  this app, and should be defused — e.g. prefixed — before ever being
+  handed to a spreadsheet tool downstream).
+- A reasonable upload size limit is enforced (row count and/or byte size;
+  exact number is an implementation detail, not a product one) — this is
+  a small-batch personal-finance tool, not a bulk data pipeline.
+- Duplicate detection: a fingerprint of `(group_id, uploader_user_id,
+  date, description, amount)` is computed server-side (never trusted from
+  the client) and checked against already-imported transactions before
+  creating a new expense from a row — re-uploading the same or an
+  overlapping file must not double-import.
+- Imported expenses are subject to the exact same authorization as any
+  other expense (view = linked group members only, edit/delete = creator
+  only) — importing doesn't create a new access-control path.
+
 ## Open / not yet decided
 
 - Tech stack (separate decision from this spec) — React + FastAPI is
@@ -190,3 +284,11 @@ up, log in, and see the groups you're in.
 - Whether there's any limit on group size or number of expenses (assume
   none for MVP unless a real constraint shows up).
 - Minimum password strength rule (length-only vs. more).
+- Exact merchant-name normalization for CSV matching (e.g. case-folding
+  and whitespace-trimming only, vs. also stripping trailing
+  transaction-ID noise some banks append) — affects how often a
+  remembered merchant actually matches next month's statement.
+- Whether there's a limit on CSV upload size/row count, and what happens
+  to rows that fail to parse (skip with a warning vs. reject the whole
+  file) — assume "skip unparseable rows, show the user what was skipped"
+  unless a real constraint shows up.
