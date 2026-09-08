@@ -59,6 +59,7 @@ def add_expense(
         split_method=body.split_method,
         splits=splits,
         created_by_user_id=current_user.id,
+        category=(body.category or "").strip() or None,
     )
     store.add_expense(expense)
     return expense
@@ -84,6 +85,7 @@ def update_expense(
             "date": body.date,
             "split_method": body.split_method,
             "splits": splits,
+            "category": (body.category or "").strip() or None,
         }
     )
     store.replace_expense(group.id, expense_id, updated)

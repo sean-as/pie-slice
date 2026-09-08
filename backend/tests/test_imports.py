@@ -461,3 +461,104 @@ class TestRememberedMapping:
         )
         shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
         assert shape["suggested"]["descriptionColumn"] == "Category"
+
+
+class TestCategory:
+    """Optional throughout: mapped when the file has one, absent when it doesn't."""
+
+    WITH_CATEGORY = b"date,description,amount,category\n2026-08-26,Comcast,79.99,Utilities\n"
+
+    def test_a_category_column_is_suggested_when_present(self, client, group_with_members):
+        g = group_with_members
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"], self.WITH_CATEGORY).json()
+        assert shape["suggested"]["categoryColumn"] == "category"
+        # Present but optional — never blocks the user.
+        assert shape["unresolved"] == []
+
+    def test_no_category_column_is_fine(self, client, group_with_members):
+        g = group_with_members
+        shape = _inspect(
+            client, g["group"]["id"], g["alice_headers"], b"date,description,amount\n2026-08-26,X,1.00\n"
+        ).json()
+        assert shape["suggested"]["categoryColumn"] is None
+        assert shape["unresolved"] == []
+
+    def test_category_reaches_the_review_row_and_the_expense(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            self.WITH_CATEGORY,
+            dateColumn="date",
+            descriptionColumn="description",
+            amountColumn="amount",
+            categoryColumn="category",
+        ).json()
+        assert preview["rows"][0]["category"] == "Utilities"
+
+        expense = _confirm(
+            client, g["group"]["id"], g["alice_headers"], preview["importId"], [preview["rows"][0]["id"]]
+        ).json()["imported"][0]
+        assert expense["category"] == "Utilities"
+
+    def test_importing_without_mapping_a_category_leaves_it_empty(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            self.WITH_CATEGORY,
+            dateColumn="date",
+            descriptionColumn="description",
+            amountColumn="amount",
+        ).json()
+        assert preview["rows"][0]["category"] is None
+
+    def test_a_blank_category_cell_is_no_category(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            b"date,description,amount,category\n2026-08-26,Comcast,79.99,\n",
+            dateColumn="date",
+            descriptionColumn="description",
+            amountColumn="amount",
+            categoryColumn="category",
+        ).json()
+        assert preview["rows"][0]["category"] is None
+
+    def test_naming_a_missing_category_column_is_rejected(self, client, group_with_members):
+        g = group_with_members
+        response = _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            self.WITH_CATEGORY,
+            dateColumn="date",
+            descriptionColumn="description",
+            amountColumn="amount",
+            categoryColumn="Nope",
+        )
+        assert response.status_code == 400
+
+    def test_category_mapping_is_remembered(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            b"date,description,amount,Bucket\n2026-08-26,Comcast,79.99,Utilities\n",
+            dateColumn="date",
+            descriptionColumn="description",
+            amountColumn="amount",
+            categoryColumn="Bucket",
+        )
+        shape = _inspect(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            b"date,description,amount,Bucket\n2026-09-26,Comcast,79.99,Utilities\n",
+        ).json()
+        assert shape["suggested"]["categoryColumn"] == "Bucket"

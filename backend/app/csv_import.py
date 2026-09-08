@@ -28,8 +28,31 @@ from typing import Literal
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_ROWS = 2_000
 
+#: Sanity ceiling on one transaction. Anything past this is a misread column
+#: or a junk row, not a real card charge — and stops absurd Decimals (1e400)
+#: from reaching int().
+MAX_AMOUNT_DOLLARS = Decimal("1_000_000_000")
+
+#: Delimiters seen in real exports, most likely first. European banks use
+#: semicolons; some tools export tab- or pipe-separated with a .csv name.
+CANDIDATE_DELIMITERS = (",", ";", "\t", "|")
+
+#: Encodings to try in order once UTF-16 has been ruled out by BOM. Excel
+#: routinely exports Windows-1252 rather than UTF-8, and rejecting that reads
+#: as "my file is broken" to someone who just exported it from their bank.
+CANDIDATE_ENCODINGS = ("utf-8-sig", "cp1252")
+
+#: UTF-16 byte-order marks. UTF-16 must only be tried when one is present:
+#: it decodes almost any even-length byte string without error, so as a
+#: blind fallback it turns a Latin-1 file into CJK mojibake instead of
+#: failing over to the encoding that would have worked.
+_UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+
 #: Header names we recognize without being told, when a file happens to use them.
 DEFAULT_COLUMN_NAMES = {"date": "date", "description": "description", "amount": "amount"}
+
+#: Recognized like the rest, but never required — see ColumnMapping.category_column.
+DEFAULT_CATEGORY_COLUMN = "category"
 
 #: How many data rows to hand back for the user to check their mapping against.
 SAMPLE_ROWS = 3
@@ -63,6 +86,9 @@ class ColumnMapping:
     amount_column: str
     date_format: DateFormat = "iso"
     amount_sign: AmountSign = "positive_is_charge"
+    #: Optional: most exports carry a category, but plenty don't. None means
+    #: "this file has none", not "couldn't find one".
+    category_column: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +96,7 @@ class ParsedRow:
     date: date_type
     description: str
     amount_cents: int
+    category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,18 +180,69 @@ def _parse_amount_cents(raw: str) -> int:
     Decimal, never float — binary floats can't represent most cent values
     exactly, and this is the boundary where dollars become the integer cents
     the rest of the app works in.
+
+    Every failure here must raise ValueError so the caller can skip the row:
+    Decimal happily accepts "Infinity", "NaN" and "1e400", and converting
+    those to int raises OverflowError/MemoryError instead — which used to
+    escape as a 500.
     """
-    cleaned = raw.strip().replace("$", "").replace(",", "")
+    cleaned = raw.strip().replace("$", "").replace(",", "").replace(" ", "")
+
+    # Accounting notation for a negative: (79.99) means -79.99.
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        cleaned = "-" + cleaned[1:-1]
+
     if not cleaned:
         raise ValueError("missing amount")
+
     try:
         dollars = Decimal(cleaned)
     except InvalidOperation as exc:
         raise ValueError(f"could not read amount {raw.strip()!r}") from exc
+
+    if not dollars.is_finite():
+        raise ValueError(f"could not read amount {raw.strip()!r}")
+    if abs(dollars) > MAX_AMOUNT_DOLLARS:
+        raise ValueError(f"amount {raw.strip()!r} is implausibly large")
+
     cents = (dollars * 100).to_integral_value()
     if cents != dollars * 100:
         raise ValueError(f"amount {raw.strip()!r} is more precise than whole cents")
     return int(cents)
+
+
+def _decode(content: bytes) -> str:
+    """
+    Tries the encodings banks and spreadsheets actually emit. UTF-16 is used
+    only when the file announces itself with a BOM (see _UTF16_BOMS);
+    otherwise UTF-8 then Windows-1252, which between them cover the rest.
+    """
+    if content.startswith(_UTF16_BOMS):
+        try:
+            return content.decode("utf-16")
+        except (UnicodeDecodeError, UnicodeError) as exc:
+            raise CsvFormatError("That file looks like UTF-16 but is incomplete or corrupt.") from exc
+
+    for encoding in CANDIDATE_ENCODINGS:
+        try:
+            return content.decode(encoding)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+
+    raise CsvFormatError(
+        "That file isn't readable as text — try re-exporting it as CSV (UTF-8) from your bank."
+    )
+
+
+def _sniff_delimiter(text: str) -> str:
+    """
+    Picks the delimiter that splits the header into the most fields. Simpler
+    and more predictable than csv.Sniffer, which guesses from the whole file
+    and can be thrown off by commas inside descriptions.
+    """
+    header_line = next((line for line in text.splitlines() if line.strip()), "")
+    best = max(CANDIDATE_DELIMITERS, key=lambda d: len(next(csv.reader([header_line], delimiter=d), [])))
+    return best if len(next(csv.reader([header_line], delimiter=best), [])) > 1 else ","
 
 
 def _read(content: bytes) -> tuple[list[str], list[tuple[int, list[str]]]]:
@@ -176,12 +254,9 @@ def _read(content: bytes) -> tuple[list[str], list[tuple[int, list[str]]]]:
     if len(content) > MAX_UPLOAD_BYTES:
         raise CsvFormatError("That file is too large — please upload a statement under 1 MB.")
 
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise CsvFormatError("That file isn't valid UTF-8 text.") from exc
+    text = _decode(content)
 
-    reader = csv.reader(io.StringIO(text))
+    reader = csv.reader(io.StringIO(text), delimiter=_sniff_delimiter(text))
     try:
         header = [name.strip() for name in next(reader)]
     except StopIteration:
@@ -239,6 +314,15 @@ def detect_mapping(content: bytes, previous: ColumnMapping | None = None) -> Fil
             suggested[role] = header[0] if header else ""
             unresolved.append(role)
 
+    # Category is optional throughout: suggested when the file plainly has
+    # one, but never added to `unresolved`, since "this file has no category"
+    # is a perfectly good answer and must not block the user.
+    category_column: str | None = None
+    if previous is not None and previous.category_column:
+        category_column = by_lower.get(previous.category_column.casefold())
+    if category_column is None and DEFAULT_CATEGORY_COLUMN in by_lower:
+        category_column = by_lower[DEFAULT_CATEGORY_COLUMN]
+
     sample_rows = [
         {name: (record[i] if i < len(record) else "") for i, name in enumerate(header)}
         for _line, record in records[:SAMPLE_ROWS]
@@ -273,6 +357,7 @@ def detect_mapping(content: bytes, previous: ColumnMapping | None = None) -> Fil
             amount_column=suggested["amount"],
             date_format=date_format,
             amount_sign=previous.amount_sign if previous else "positive_is_charge",
+            category_column=category_column,
         ),
         unresolved=unresolved,
         date_format_ambiguous=ambiguous,
@@ -323,6 +408,9 @@ def parse_csv(content: bytes, mapping: ColumnMapping | None = None) -> ParseResu
     date_at = _column_index(header, mapping.date_column, "date")
     description_at = _column_index(header, mapping.description_column, "description")
     amount_at = _column_index(header, mapping.amount_column, "amount")
+    category_at = (
+        _column_index(header, mapping.category_column, "category") if mapping.category_column else None
+    )
 
     if mapping.date_format not in _DATE_FORMAT_PATTERNS:
         raise CsvFormatError(f"Unknown date format {mapping.date_format!r}.")
@@ -356,6 +444,18 @@ def parse_csv(content: bytes, mapping: ColumnMapping | None = None) -> ParseResu
         if amount_cents <= 0:
             continue
 
-        rows.append(ParsedRow(date=row_date, description=description, amount_cents=amount_cents))
+        category = None
+        if category_at is not None and category_at < len(record):
+            # A blank cell in a mapped category column is simply no category.
+            category = defuse_formula(record[category_at]) or None
+
+        rows.append(
+            ParsedRow(
+                date=row_date,
+                description=description,
+                amount_cents=amount_cents,
+                category=category,
+            )
+        )
 
     return ParseResult(rows=rows, skipped=skipped)

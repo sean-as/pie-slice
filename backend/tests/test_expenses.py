@@ -277,3 +277,61 @@ class TestMemberValidation:
         )
         listed = client.get(f"/api/groups/{g['group']['id']}/expenses", headers=g["alice_headers"]).json()
         assert listed == []
+
+
+class TestCategory:
+    def _body(self, g, **overrides):
+        body = {
+            "description": "Groceries",
+            "amountCents": 3000,
+            "payerId": g["alice_member"]["id"],
+            "date": "2026-08-26",
+            "splitMethod": "equal",
+            "splitInput": {"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+        }
+        body.update(overrides)
+        return body
+
+    def test_category_is_optional(self, client, group_with_members):
+        g = group_with_members
+        response = client.post(
+            f"/api/groups/{g['group']['id']}/expenses", json=self._body(g), headers=g["alice_headers"]
+        )
+        assert response.status_code == 201
+        assert response.json()["category"] is None
+
+    def test_category_round_trips(self, client, group_with_members):
+        g = group_with_members
+        created = client.post(
+            f"/api/groups/{g['group']['id']}/expenses",
+            json=self._body(g, category="Utilities"),
+            headers=g["alice_headers"],
+        ).json()
+        assert created["category"] == "Utilities"
+
+        listed = client.get(f"/api/groups/{g['group']['id']}/expenses", headers=g["alice_headers"]).json()
+        assert listed[0]["category"] == "Utilities"
+
+    def test_blank_category_is_stored_as_none(self, client, group_with_members):
+        g = group_with_members
+        created = client.post(
+            f"/api/groups/{g['group']['id']}/expenses",
+            json=self._body(g, category="   "),
+            headers=g["alice_headers"],
+        ).json()
+        assert created["category"] is None
+
+    def test_category_can_be_edited(self, client, group_with_members):
+        g = group_with_members
+        created = client.post(
+            f"/api/groups/{g['group']['id']}/expenses",
+            json=self._body(g, category="Utilities"),
+            headers=g["alice_headers"],
+        ).json()
+
+        updated = client.put(
+            f"/api/groups/{g['group']['id']}/expenses/{created['id']}",
+            json=self._body(g, category="Groceries"),
+            headers=g["alice_headers"],
+        ).json()
+        assert updated["category"] == "Groceries"

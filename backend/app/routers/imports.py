@@ -58,6 +58,7 @@ def _to_parser(mapping: ColumnMapping) -> ParserMapping:
         amount_column=mapping.amount_column,
         date_format=mapping.date_format,
         amount_sign=mapping.amount_sign,
+        category_column=mapping.category_column,
     )
 
 
@@ -107,6 +108,7 @@ async def inspect_csv(
             amount_column=shape.suggested.amount_column,
             date_format=shape.suggested.date_format,
             amount_sign=shape.suggested.amount_sign,
+            category_column=shape.suggested.category_column,
         ),
         unresolved=shape.unresolved,
         date_format_ambiguous=shape.date_format_ambiguous,
@@ -121,6 +123,9 @@ async def upload_csv(
     amount_column: str | None = Form(None, alias="amountColumn"),
     date_format: DateFormat = Form("iso", alias="dateFormat"),
     amount_sign: AmountSign = Form("positive_is_charge", alias="amountSign"),
+    # Optional: plenty of exports have no category column at all, and a
+    # blank one must not block the import.
+    category_column: str | None = Form(None, alias="categoryColumn"),
     group: Group = Depends(require_group_membership),
     current_user: StoredUser = Depends(get_current_user),
 ) -> ImportPreview:
@@ -143,6 +148,7 @@ async def upload_csv(
             amount_column=amount_column,  # type: ignore[arg-type]
             date_format=date_format,
             amount_sign=amount_sign,
+            category_column=(category_column or "").strip() or None,
         )
         if all(named)
         else None
@@ -185,6 +191,7 @@ async def upload_csv(
                 amount_cents=row.amount_cents,
                 fingerprint=row_fingerprint,
                 preselected=normalize_merchant(row.description) in remembered,
+                category=row.category,
             )
         )
 
@@ -198,6 +205,7 @@ async def upload_csv(
                 date=item.date,
                 description=item.description,
                 amount_cents=item.amount_cents,
+                category=item.category,
                 preselected=item.preselected,
             )
             for item in items
@@ -250,6 +258,7 @@ def confirm_import(
             split_method="equal",
             splits=resolve_splits(item.amount_cents, EqualSplitInput(method="equal", member_ids=member_ids)),
             created_by_user_id=current_user.id,
+            category=item.category,
         )
         store.add_expense(expense)
         imported.append(expense)

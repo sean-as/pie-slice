@@ -659,6 +659,9 @@ paths:
                   $ref: "#/components/schemas/DateFormat"
                 amountSign:
                   $ref: "#/components/schemas/AmountSign"
+                categoryColumn:
+                  type: string
+                  description: Optional header name of a category column. Omit or leave blank for none.
       responses:
         "200":
           description: Parsed transactions awaiting review. Nothing has been created.
@@ -1087,6 +1090,12 @@ components:
           $ref: "#/components/schemas/SplitMethod"
         splitInput:
           $ref: "#/components/schemas/SplitInput"
+        category:
+          type: [string, "null"]
+          maxLength: 100
+          description: >
+            Optional free text. Blank or whitespace-only is stored as null.
+            Set by hand or from a mapped CSV category column.
 
     Expense:
       type: object
@@ -1118,6 +1127,9 @@ components:
           type: string
           format: uuid
           description: Whoever was logged in when this was created — only they may edit/delete it.
+        category:
+          type: [string, "null"]
+          description: Optional free text; null when unset.
 
     SettlementInput:
       description: Request body shared by create (POST) and full-replacement update (PUT). Matches AddSettlementInput / UpdateSettlementInput in services/types.ts.
@@ -1231,6 +1243,9 @@ components:
         amountCents:
           type: integer
           exclusiveMinimum: 0
+        category:
+          type: [string, "null"]
+          description: From the mapped category column, if any.
         preselected:
           type: boolean
           description: >
@@ -1329,6 +1344,12 @@ components:
           $ref: "#/components/schemas/DateFormat"
         amountSign:
           $ref: "#/components/schemas/AmountSign"
+        categoryColumn:
+          type: [string, "null"]
+          description: >
+            Optional. Null means this file has no category column, which is
+            a perfectly good answer — unlike the three required columns, a
+            missing category never blocks an import.
 
     FileShape:
       type: object

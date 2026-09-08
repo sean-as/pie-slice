@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, FastAPI
+import logging
+
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import db_models  # noqa: F401  (registers tables on Base.metadata)
 from app.db import Base, engine
@@ -25,6 +28,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger = logging.getLogger("pieslice")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Turns an unexpected crash into a normal JSON response.
+
+    Without this, an unhandled exception is rendered by Starlette's outermost
+    error middleware — *outside* CORSMiddleware — so the 500 carries no
+    `Access-Control-Allow-Origin` header. The browser then refuses to expose
+    it and the frontend sees a bare "Failed to fetch", which looks like the
+    server is down and hides the real error. Never let a bug masquerade as a
+    network failure.
+    """
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Something went wrong on our end. Please try again."},
+    )
+
 
 api = APIRouter(prefix="/api")
 api.include_router(auth.router)

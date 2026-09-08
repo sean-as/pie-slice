@@ -71,8 +71,13 @@ up, log in, and see the groups you're in.
     say which column is the date, the description and the amount, whether a
     charge is a positive or a negative number, and what date format the file
     uses — so I don't have to reformat the export by hand. Whatever the app
-    can work out from the file is filled in for me already.
-15b. As a returning user, the choices I made last time I uploaded to this
+    can work out from the file is filled in for me already, and I can see
+    the file's own first rows while I choose, so I'm never guessing at how
+    my bank formatted things.
+15b. As a user whose export includes a category, I can optionally map that
+    column too and have it saved on the imported expenses. If my file has no
+    category column, nothing is blocked.
+15c. As a returning user, the choices I made last time I uploaded to this
     group are filled in for me, since my bank's format doesn't change month
     to month.
 16. Upon upload, I'm shown every transaction in the file to review before
@@ -169,13 +174,20 @@ up, log in, and see the groups you're in.
 - All amounts are stored and computed in integer cents internally — no
   floating-point currency math anywhere in the split/balance logic
   (prevents rounding-error drift across many expenses).
+- Parsing an amount from a file must never crash: unreadable, non-finite
+  (`NaN`, `Infinity`) and implausibly large values skip their row with a
+  reason. A crash is worse than a wrong answer here, because a server error
+  on a cross-origin request reaches the browser as an unexplained network
+  failure rather than a message the user can act on.
 
 **CSV import**
 - Expected file format: a header row followed by data rows (see Technical
   constraints for the exact grammar). Banks disagree on nearly everything
   about that file, so before reviewing transactions the user confirms how
   to read it:
-  - **which column** holds the date, the description, and the amount;
+  - **which column** holds the date, the description, and the amount, and
+    optionally a **category** — most exports have one, plenty don't, and a
+    file without one imports perfectly well;
   - **which sign means a charge** — some banks write purchases as positive
     and payments as negative, others do the reverse;
   - **what date format** the date column uses — ISO `YYYY-MM-DD`,
@@ -210,6 +222,10 @@ up, log in, and see the groups you're in.
   group if it isn't already there, so it is pre-selected on the *next*
   upload (not retroactively on past ones). There is no separate "always
   include" action — importing once is what remembers it.
+- The **category** column is optional in a way the other three are not: a
+  file with no category still imports, and a blank category cell simply
+  means no category. When mapped, the value is stored on the resulting
+  expense.
 - Every imported expense: `description` = the transaction's description,
   `amountCents` = the transaction's amount, `payerId` = the uploader's own
   member record in the group, `date` = the transaction's date,
@@ -237,8 +253,10 @@ up, log in, and see the groups you're in.
 - Deleting or archiving an entire group.
 - Transferring or sharing "creator" status on an expense/settlement — it's
   permanently whoever logged it (no reassignment, no admin override).
-- Receipt photo attachments, categories/tags, or recurring expenses
-  configured outside of CSV import.
+- Receipt photo attachments, or recurring expenses configured outside of
+  CSV import. (An expense does carry one optional free-text **category** —
+  typed by hand or mapped from a CSV column — but there is no category
+  list, no per-category reporting, and no filtering or grouping by it.)
 - Notifications, reminders, or emails of any kind.
 - Native mobile app — web only.
 - Bank/card account aggregation (Plaid or similar) — CSV upload only, no
@@ -290,10 +308,19 @@ up, log in, and see the groups you're in.
 
 **CSV import**
 - CSV grammar: header row required; one row per transaction; three columns
-  are used (date, description, amount) and any others are ignored. Column
-  order is never assumed. Which column is which comes from the user's
-  mapping, defaulting to a case-insensitive match on the names `date`,
-  `description` and `amount` when the file happens to use them.
+  are used (date, description, amount), a fourth (category) optionally, and
+  any others are ignored. Column order is never assumed. Which column is
+  which comes from the user's mapping, defaulting to a case-insensitive
+  match on the names `date`, `description`, `amount` and `category` when the
+  file happens to use them.
+- Files are accepted as UTF-8, UTF-16 (when BOM-marked) or Windows-1252,
+  since spreadsheet exports are routinely not UTF-8 and rejecting one reads
+  as "the app is broken" to someone who just exported it. UTF-16 is only
+  attempted when a BOM says so — it decodes almost any byte sequence without
+  complaint, so guessing it turns a Windows-1252 file into mojibake instead
+  of failing over.
+- The delimiter is detected from the header among comma, semicolon, tab and
+  pipe (semicolons being standard wherever comma is the decimal separator).
 - Amounts are plain decimal dollars (e.g. `42.50`), optionally with a
   currency symbol or thousands separators. Which sign means a charge is
   the user's choice, defaulting to positive.

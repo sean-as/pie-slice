@@ -137,6 +137,7 @@ class ExpenseInput(ApiModel):
     date: date_type
     split_method: SplitMethod = Field(alias="splitMethod")
     split_input: SplitInput = Field(alias="splitInput", discriminator="method")
+    category: str | None = Field(default=None, max_length=100)
 
 
 class Expense(ApiModel):
@@ -149,6 +150,7 @@ class Expense(ApiModel):
     split_method: SplitMethod = Field(alias="splitMethod")
     splits: list[Split]
     created_by_user_id: str = Field(alias="createdByUserId")
+    category: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +198,8 @@ class ColumnMapping(ApiModel):
     amount_column: str = Field(min_length=1, alias="amountColumn")
     date_format: DateFormat = Field(default="iso", alias="dateFormat")
     amount_sign: AmountSign = Field(default="positive_is_charge", alias="amountSign")
+    #: Optional — plenty of exports have no category column at all.
+    category_column: str | None = Field(default=None, alias="categoryColumn")
 
 
 class FileShape(ApiModel):
@@ -226,6 +230,7 @@ class ReviewRow(ApiModel):
     date: date_type
     description: str
     amount_cents: int = Field(alias="amountCents")
+    category: str | None = None
     preselected: bool
 
 

@@ -324,3 +324,90 @@ class TestLineNumbers:
             _csv("date,description,amount", "2026-08-26,Comcast,79.99", "", "bad,Shell,40.00")
         )
         assert [s.line for s in result.skipped] == [4]
+
+
+class TestRobustness:
+    """
+    Every one of these used to be a 500 or an outright rejection. A 500 on a
+    cross-origin request reaches the browser as an opaque "Failed to fetch",
+    so a crash here is worse than a wrong answer — it hides itself.
+    """
+
+    def _amount(self, value: str):
+        return parse_csv(_csv("date,description,amount", f"2026-08-26,X,{value}"))
+
+    @pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN", "1e400", "9" * 400 + ".00"])
+    def test_pathological_amounts_skip_the_row_instead_of_crashing(self, value):
+        result = self._amount(value)
+        assert result.rows == []
+        assert len(result.skipped) == 1
+
+    def test_implausibly_large_amount_is_skipped(self):
+        result = self._amount("999999999999.00")
+        assert result.rows == []
+        assert "implausibly large" in result.skipped[0].reason
+
+    def test_accounting_parentheses_mean_negative(self):
+        # (79.99) is a charge only under the negative-is-charge convention.
+        charge = parse_csv(
+            _csv("date,description,amount", "2026-08-26,X,(79.99)"),
+            ColumnMapping(
+                date_column="date",
+                description_column="description",
+                amount_column="amount",
+                amount_sign="negative_is_charge",
+            ),
+        )
+        assert charge.rows[0].amount_cents == 7999
+        assert self._amount("(79.99)").rows == []
+
+    def test_spaces_inside_amounts_are_tolerated(self):
+        assert self._amount("1 234.56").rows[0].amount_cents == 123456
+
+
+class TestEncodings:
+    HEADER = "date,description,amount\n2026-08-26,Café Rio,1.00"
+
+    def test_utf8(self):
+        result = parse_csv(self.HEADER.encode("utf-8"))
+        assert result.rows[0].description == "Café Rio"
+
+    def test_windows_1252(self):
+        """What Excel hands you on Windows more often than not."""
+        result = parse_csv(self.HEADER.encode("cp1252"))
+        assert result.rows[0].description == "Café Rio"
+
+    def test_utf16_with_bom(self):
+        result = parse_csv(self.HEADER.encode("utf-16"))
+        assert result.rows[0].description == "Café Rio"
+
+    def test_latin1_is_not_mangled_by_the_utf16_path(self):
+        # utf-16 decodes almost any even-length bytes without erroring, so
+        # trying it unconditionally turned this file into CJK mojibake.
+        content = "date,description,amount\n2026-08-26,Café,1.00".encode("latin-1")
+        result = parse_csv(content)
+        assert result.rows[0].description == "Café"
+
+
+class TestDelimiters:
+    def test_semicolons(self):
+        """Standard in much of Europe, where comma is the decimal separator."""
+        result = parse_csv(b"date;description;amount\n2026-08-26;Comcast;79.99")
+        assert result.rows[0].description == "Comcast"
+
+    def test_tabs(self):
+        result = parse_csv(b"date\tdescription\tamount\n2026-08-26\tComcast\t79.99")
+        assert result.rows[0].amount_cents == 7999
+
+    def test_pipes(self):
+        result = parse_csv(b"date|description|amount\n2026-08-26|Comcast|79.99")
+        assert result.rows[0].amount_cents == 7999
+
+    def test_commas_win_when_a_description_contains_semicolons(self):
+        result = parse_csv(b'date,description,amount\n2026-08-26,"A; B; C",79.99')
+        assert result.rows[0].description == "A; B; C"
+
+    def test_detect_mapping_sees_the_same_delimiter(self):
+        shape = detect_mapping(b"date;description;amount\n2026-08-26;Comcast;79.99")
+        assert shape.columns == ["date", "description", "amount"]
+        assert shape.unresolved == []

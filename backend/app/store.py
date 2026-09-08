@@ -65,6 +65,7 @@ class PendingItem:
     amount_cents: int
     fingerprint: str
     preselected: bool
+    category: str | None = None
 
 
 def _user_row_to_stored(row: UserRow) -> StoredUser:
@@ -86,6 +87,7 @@ def _expense_row_to_pydantic(row: ExpenseRow) -> Expense:
         split_method=row.split_method,
         splits=[Split(member_id=s.member_id, amount_cents=s.amount_cents) for s in row.splits],
         created_by_user_id=row.created_by_user_id,
+        category=row.category,
     )
 
 
@@ -233,6 +235,7 @@ class Store:
                 date=expense.date,
                 split_method=expense.split_method,
                 created_by_user_id=expense.created_by_user_id,
+                category=expense.category,
             )
             row.splits = [
                 ExpenseSplitRow(member_id=s.member_id, amount_cents=s.amount_cents) for s in expense.splits
@@ -259,6 +262,7 @@ class Store:
             row.payer_id = updated.payer_id
             row.date = updated.date
             row.split_method = updated.split_method
+            row.category = updated.category
             row.splits = [
                 ExpenseSplitRow(member_id=s.member_id, amount_cents=s.amount_cents) for s in updated.splits
             ]
@@ -375,6 +379,7 @@ class Store:
                 amount_column=row.amount_column,
                 date_format=row.date_format,  # type: ignore[arg-type]
                 amount_sign=row.amount_sign,  # type: ignore[arg-type]
+                category_column=row.category_column,
             )
 
     def save_import_mapping(self, user_id: str, group_id: str, mapping: ColumnMapping) -> None:
@@ -392,6 +397,7 @@ class Store:
             row.amount_column = mapping.amount_column
             row.date_format = mapping.date_format
             row.amount_sign = mapping.amount_sign
+            row.category_column = mapping.category_column
             session.commit()
 
     def known_fingerprints(self, group_id: str, uploader_user_id: str, candidates: list[str]) -> set[str]:
@@ -426,6 +432,7 @@ class Store:
                     amount_cents=item.amount_cents,
                     fingerprint=item.fingerprint,
                     preselected=item.preselected,
+                    category=item.category,
                 )
                 for item in items
             ]
@@ -456,6 +463,7 @@ class Store:
                     amount_cents=item.amount_cents,
                     fingerprint=item.fingerprint,
                     preselected=item.preselected,
+                    category=item.category,
                 )
                 for item in row.items
             ]

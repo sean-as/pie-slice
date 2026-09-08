@@ -76,6 +76,8 @@ class ExpenseRow(Base):
     date: Mapped[date_type]
     split_method: Mapped[str] = mapped_column(String(20))
     created_by_user_id: Mapped[str] = mapped_column(String(36))
+    #: Free text, optional. Set from a mapped CSV column or typed by hand.
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     splits: Mapped[list["ExpenseSplitRow"]] = relationship(
         back_populates="expense", cascade="all, delete-orphan", order_by="ExpenseSplitRow.pk"
@@ -130,6 +132,7 @@ class ImportMappingRow(Base):
     amount_column: Mapped[str] = mapped_column(String(255))
     date_format: Mapped[str] = mapped_column(String(10))
     amount_sign: Mapped[str] = mapped_column(String(30))
+    category_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class ImportedTransactionRow(Base):
@@ -177,6 +180,7 @@ class PendingImportItemRow(Base):
     date: Mapped[date_type]
     description: Mapped[str] = mapped_column(String(500))
     amount_cents: Mapped[int] = mapped_column(Integer)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64))
     #: Whether the UI should tick this row by default — a hint, never authority.
     preselected: Mapped[bool] = mapped_column(Boolean, default=False)
