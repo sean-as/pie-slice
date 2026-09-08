@@ -50,3 +50,20 @@ def require_group_membership(group_id: str, current_user: StoredUser = Depends(g
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found.")
     return group
+
+
+def require_members(group: Group, member_ids: list[str]) -> None:
+    """
+    Rejects any member id that isn't in this group. Without this an expense
+    could name a payer (or split participant) belonging to a *different*
+    group: the row would land in this group's list, but compute_balances
+    only tallies ids in this group's member list, so the money would
+    silently vanish from the group's totals.
+    """
+    known = {m.id for m in group.members}
+    unknown = [member_id for member_id in member_ids if member_id not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not a member of this group.",
+        )

@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth import get_current_user, require_group_membership
+from app.auth import get_current_user, require_group_membership, require_members
 from app.domain import SplitValidationError, resolve_splits
-from app.models import Expense, ExpenseInput, Group
+from app.models import Expense, ExpenseInput, Group, Split
 from app.store import StoredUser, new_id, store
 
 router = APIRouter(prefix="/groups/{group_id}/expenses", tags=["expenses"])
+
+
+def _resolve_or_400(group: Group, body: ExpenseInput) -> list[Split]:
+    """Validates every member id the body names, then resolves the split to final cents."""
+    require_members(group, [body.payer_id])
+    try:
+        splits = resolve_splits(body.amount_cents, body.split_input)
+    except SplitValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    require_members(group, [s.member_id for s in splits])
+    return splits
 
 
 def _find_or_404(group_id: str, expense_id: str) -> Expense:
@@ -36,10 +47,7 @@ def add_expense(
     group: Group = Depends(require_group_membership),
     current_user: StoredUser = Depends(get_current_user),
 ) -> Expense:
-    try:
-        splits = resolve_splits(body.amount_cents, body.split_input)
-    except SplitValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    splits = _resolve_or_400(group, body)
 
     expense = Expense(
         id=new_id(),
@@ -66,10 +74,7 @@ def update_expense(
     existing = _find_or_404(group.id, expense_id)
     _require_creator(existing, current_user)
 
-    try:
-        splits = resolve_splits(body.amount_cents, body.split_input)
-    except SplitValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    splits = _resolve_or_400(group, body)
 
     updated = existing.model_copy(
         update={

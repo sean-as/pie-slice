@@ -192,3 +192,88 @@ class TestEditAndDeleteExpense:
 
         remaining = client.get(f"/api/groups/{g['group']['id']}/expenses", headers=g["alice_headers"]).json()
         assert all(e["id"] != expense["id"] for e in remaining)
+
+
+class TestMemberValidation:
+    """
+    A member id from another group (or pure garbage) must be rejected, not
+    silently stored: compute_balances only tallies ids in *this* group's
+    member list, so a foreign payer would make the money vanish from the
+    group's totals.
+    """
+
+    def _foreign_member_id(self, client, group_with_members):
+        g = group_with_members
+        other = client.post("/api/groups", json={"name": "Other"}, headers=g["bob_headers"]).json()
+        return other["members"][0]["id"]
+
+    def test_rejects_foreign_payer(self, client, group_with_members):
+        g = group_with_members
+        foreign = self._foreign_member_id(client, g)
+        response = _add_expense(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            payer_id=foreign,
+            split_input={"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_unknown_payer(self, client, group_with_members):
+        g = group_with_members
+        response = _add_expense(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            payer_id="not-a-real-member",
+            split_input={"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_foreign_split_participant(self, client, group_with_members):
+        g = group_with_members
+        foreign = self._foreign_member_id(client, g)
+        response = _add_expense(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            payer_id=g["alice_member"]["id"],
+            split_input={"method": "equal", "memberIds": [g["alice_member"]["id"], foreign]},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_foreign_member_on_update(self, client, group_with_members):
+        g = group_with_members
+        created = _add_expense(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            payer_id=g["alice_member"]["id"],
+            split_input={"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+        ).json()
+
+        response = client.put(
+            f"/api/groups/{g['group']['id']}/expenses/{created['id']}",
+            json={
+                "description": "Groceries",
+                "amountCents": 3000,
+                "payerId": "not-a-real-member",
+                "date": "2026-08-26",
+                "splitMethod": "equal",
+                "splitInput": {"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+            },
+            headers=g["alice_headers"],
+        )
+        assert response.status_code == 400
+
+    def test_no_expense_is_stored_when_rejected(self, client, group_with_members):
+        g = group_with_members
+        _add_expense(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            payer_id="not-a-real-member",
+            split_input={"method": "equal", "memberIds": [g["alice_member"]["id"]]},
+        )
+        listed = client.get(f"/api/groups/{g['group']['id']}/expenses", headers=g["alice_headers"]).json()
+        assert listed == []

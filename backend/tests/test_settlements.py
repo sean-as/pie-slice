@@ -134,3 +134,41 @@ class TestEditAndDeleteSettlement:
             f"/api/groups/{g['group']['id']}/settlements", headers=g["alice_headers"]
         ).json()
         assert all(s["id"] != settlement["id"] for s in remaining)
+
+
+class TestMemberValidation:
+    def test_rejects_foreign_member(self, client, group_with_members):
+        g = group_with_members
+        other = client.post("/api/groups", json={"name": "Other"}, headers=g["bob_headers"]).json()
+        foreign = other["members"][0]["id"]
+
+        response = _add_settlement(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            from_member_id=foreign,
+            to_member_id=g["alice_member"]["id"],
+        )
+        assert response.status_code == 400
+
+    def test_rejects_unknown_member(self, client, group_with_members):
+        g = group_with_members
+        response = _add_settlement(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            from_member_id=g["alice_member"]["id"],
+            to_member_id="not-a-real-member",
+        )
+        assert response.status_code == 400
+
+    def test_rejects_self_settlement(self, client, group_with_members):
+        g = group_with_members
+        response = _add_settlement(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            from_member_id=g["alice_member"]["id"],
+            to_member_id=g["alice_member"]["id"],
+        )
+        assert response.status_code == 400

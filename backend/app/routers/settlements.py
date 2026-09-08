@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth import get_current_user, require_group_membership
+from app.auth import get_current_user, require_group_membership, require_members
 from app.models import Group, Settlement, SettlementInput
 from app.store import StoredUser, new_id, store
 
 router = APIRouter(prefix="/groups/{group_id}/settlements", tags=["settlements"])
+
+
+def _validate_or_400(group: Group, body: SettlementInput) -> None:
+    require_members(group, [body.from_member_id, body.to_member_id])
+    if body.from_member_id == body.to_member_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A settlement needs two different members.",
+        )
 
 
 def _find_or_404(group_id: str, settlement_id: str) -> Settlement:
@@ -35,6 +44,8 @@ def add_settlement(
     group: Group = Depends(require_group_membership),
     current_user: StoredUser = Depends(get_current_user),
 ) -> Settlement:
+    _validate_or_400(group, body)
+
     settlement = Settlement(
         id=new_id(),
         group_id=group.id,
@@ -58,6 +69,7 @@ def update_settlement(
 ) -> Settlement:
     existing = _find_or_404(group.id, settlement_id)
     _require_creator(existing, current_user)
+    _validate_or_400(group, body)
 
     updated = existing.model_copy(
         update={

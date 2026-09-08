@@ -24,11 +24,13 @@ up, log in, and see the groups you're in.
 - Single currency: **USD only**.
 - A user can **upload a CSV of their own credit card transactions** into a
   group to turn recurring bills (utilities, gas, groceries) into expenses
-  without typing them in one at a time. Each person keeps their own
-  per-group list of merchants they've chosen to always include; on their
-  next upload to that group, matching transactions become expenses
-  automatically, and anything new is presented for a one-time decision.
-  No bank connection (e.g. Plaid) — CSV only, see Non-goals.
+  without typing them in one at a time. Every upload ends in a **review
+  screen**: transactions from merchants that person has imported before in
+  that group come **pre-selected**, anything new starts unselected but can
+  be selected too, and nothing is created until they submit. Each person
+  builds up their own per-group list of previously-imported merchants
+  simply by importing — there's no separate "always include" decision to
+  make. No bank connection (e.g. Plaid) — CSV only, see Non-goals.
 
 ## User stories
 
@@ -65,17 +67,18 @@ up, log in, and see the groups you're in.
     Other members cannot.
 15. As a linked member of a group, I can upload a CSV of my own credit card
     transactions (date, description, amount) into that group.
-16. Upon upload, transactions from merchants I've previously chosen to
-    always include *in this group* become expenses automatically — no
-    per-transaction confirmation.
-17. For transactions from merchants I haven't decided on yet, I'm shown
-    them and choose, per transaction: import it once as a **one-off**
-    (doesn't change future uploads), or **always include this merchant**
-    (imports this transaction and remembers the merchant so future uploads
-    of mine to this group auto-include it).
-18. My remembered merchants are mine alone — they don't affect what
-    another member sees when they upload their own CSV, even to the same
-    group, and don't carry over to a different group I'm in.
+16. Upon upload, I'm shown every transaction in the file to review before
+    anything is created; transactions from merchants I've imported before
+    *in this group* come pre-selected, so a recurring statement is mostly
+    already ticked when I open it.
+17. On that review screen I can select or deselect any transaction —
+    including ones from merchants I've never imported before — and only
+    what's still selected when I submit becomes an expense.
+18. Importing a transaction remembers its merchant for me in this group,
+    so it comes pre-selected on my next upload. That memory is mine alone
+    — it doesn't affect what another member sees when they upload their
+    own CSV, even to the same group, and doesn't carry over to a different
+    group I'm in.
 19. Expenses created from a CSV import behave exactly like any other
     expense: equal split across current group members, included in
     balances, and editable/deletable only by me (the importer).
@@ -163,31 +166,38 @@ up, log in, and see the groups you're in.
 - Expected file format: a header row followed by rows of `date,
   description, amount` (see Technical constraints for the exact grammar).
   Only rows with a positive amount are considered — zero/negative rows
-  (payments, credits, refunds) are silently skipped, not imported and not
-  shown for a decision.
+  (payments, credits, refunds) are silently skipped: not imported and not
+  shown on the review screen at all.
 - "Merchant" = the transaction's `description` field. Matching against a
   remembered merchant is on that field (exact/normalized match — see Open
   / not yet decided for how forgiving that normalization is).
 - The remembered-merchant list is scoped to **(uploading user, group)** —
   see user story 18.
-- On upload, every row is bucketed into exactly one of:
-  1. **Matches a remembered merchant** for this (user, group) → becomes an
-     expense immediately, no confirmation.
-  2. **Doesn't match** → shown to the user, who must choose "one-off" or
-     "always include this merchant" before it's imported; if they do
-     nothing for a row, it is not imported.
-- Choosing "always include this merchant" imports every matching
-  transaction in *this* upload and adds the merchant to the user's
-  remembered list for this group (so it auto-imports on the *next*
-  upload, not retroactively on past ones).
+- **No transaction is ever created without an explicit submit.** On
+  upload, every parsed row is returned for review, each one either:
+  1. **pre-selected** — its merchant is in this (user, group)'s
+     remembered list, or
+  2. **unselected** — a merchant this user hasn't imported in this group
+     before.
+  Both kinds are freely selectable and deselectable; the pre-selection is
+  a convenience, not a commitment.
+- On submit, exactly the still-selected rows become expenses. Deselected
+  rows are not imported, and deselecting does *not* remove a merchant from
+  the remembered list — it only skips it for this upload.
+- Importing a row adds its merchant to the user's remembered list for this
+  group if it isn't already there, so it is pre-selected on the *next*
+  upload (not retroactively on past ones). There is no separate "always
+  include" action — importing once is what remembers it.
 - Every imported expense: `description` = the transaction's description,
   `amountCents` = the transaction's amount, `payerId` = the uploader's own
   member record in the group, `date` = the transaction's date,
   `splitMethod` = equal across all current group members, `createdByUserId`
   = the uploader. Identical in every other respect to a manually-logged
   expense (creator-only edit/delete, appears in balances, etc.).
-- Re-uploading a file (or an overlapping date range) must not create
-  duplicate expenses for a transaction already imported — see Technical
+- A transaction this user has already imported into this group is left off
+  the review screen entirely (reported only as a count of skipped
+  duplicates), so re-uploading a file or an overlapping date range can
+  never double-import — see Technical
   constraints for the dedupe rule.
 
 ## Non-goals (this version)
@@ -218,9 +228,11 @@ up, log in, and see the groups you're in.
   always equal-split (like any new expense); edit afterward if a specific
   one needs a different split.
 - Un-remembering a merchant, or any UI to view/manage the remembered-
-  merchant list directly — once remembered, it auto-imports every future
-  upload to that group; the only undo is deleting the resulting expenses
-  after the fact.
+  merchant list directly — the list is only ever visible as pre-selection
+  on the review screen, and deselecting there skips that merchant for that
+  upload without forgetting it. (Low stakes now that nothing imports
+  without a review: a stale remembered merchant costs one unticked box,
+  not an unwanted expense.)
 - Fuzzy/approximate merchant matching (e.g. treating "AMAZON.COM*A1B2C"
   and "AMAZON MKTPLACE" as the same merchant) — matching is on the literal
   (normalized) description string.
