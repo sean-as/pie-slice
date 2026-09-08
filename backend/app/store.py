@@ -15,12 +15,25 @@ from __future__ import annotations
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import date as date_type
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine
-from app.db_models import ExpenseRow, ExpenseSplitRow, GroupRow, MemberRow, SettlementRow, TokenRow, UserRow
+from app.db_models import (
+    ExpenseRow,
+    ExpenseSplitRow,
+    GroupRow,
+    ImportedTransactionRow,
+    MemberRow,
+    PendingImportItemRow,
+    PendingImportRow,
+    RememberedMerchantRow,
+    SettlementRow,
+    TokenRow,
+    UserRow,
+)
 from app.models import Expense, Group, Member, Settlement, Split, User
 
 
@@ -39,6 +52,18 @@ class StoredUser:
 
     def to_public(self) -> User:
         return User(id=self.id, email=self.email, display_name=self.display_name)
+
+
+@dataclass
+class PendingItem:
+    """One staged CSV row. Lives server-side between upload and confirm."""
+
+    id: str
+    date: date_type
+    description: str
+    amount_cents: int
+    fingerprint: str
+    preselected: bool
 
 
 def _user_row_to_stored(row: UserRow) -> StoredUser:
@@ -305,6 +330,126 @@ class Store:
             if row is not None:
                 session.delete(row)
                 session.commit()
+
+    # ---- CSV import ----
+
+    def remembered_merchants(self, user_id: str, group_id: str) -> set[str]:
+        with SessionLocal() as session:
+            rows = (
+                session.execute(
+                    select(RememberedMerchantRow.merchant).where(
+                        RememberedMerchantRow.user_id == user_id,
+                        RememberedMerchantRow.group_id == group_id,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return set(rows)
+
+    def remember_merchants(self, user_id: str, group_id: str, merchants: set[str]) -> None:
+        """Adds any that aren't already there; re-remembering is a no-op."""
+        existing = self.remembered_merchants(user_id, group_id)
+        new = merchants - existing
+        if not new:
+            return
+        with SessionLocal() as session:
+            for merchant in sorted(new):
+                session.add(RememberedMerchantRow(user_id=user_id, group_id=group_id, merchant=merchant))
+            session.commit()
+
+    def known_fingerprints(self, group_id: str, uploader_user_id: str, candidates: list[str]) -> set[str]:
+        if not candidates:
+            return set()
+        with SessionLocal() as session:
+            rows = (
+                session.execute(
+                    select(ImportedTransactionRow.fingerprint).where(
+                        ImportedTransactionRow.group_id == group_id,
+                        ImportedTransactionRow.uploader_user_id == uploader_user_id,
+                        ImportedTransactionRow.fingerprint.in_(candidates),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return set(rows)
+
+    def create_pending_import(
+        self, group_id: str, uploader_user_id: str, items: list[PendingItem]
+    ) -> str:
+        import_id = new_id()
+        with SessionLocal() as session:
+            row = PendingImportRow(id=import_id, group_id=group_id, uploader_user_id=uploader_user_id)
+            row.items = [
+                PendingImportItemRow(
+                    id=item.id,
+                    import_id=import_id,
+                    date=item.date,
+                    description=item.description,
+                    amount_cents=item.amount_cents,
+                    fingerprint=item.fingerprint,
+                    preselected=item.preselected,
+                )
+                for item in items
+            ]
+            session.add(row)
+            session.commit()
+        return import_id
+
+    def get_pending_import(self, import_id: str, group_id: str, uploader_user_id: str) -> list[PendingItem] | None:
+        """
+        Scoped to (import, group, uploader) so one user can never confirm
+        another's staged rows. None means "no such pending import for you".
+        """
+        with SessionLocal() as session:
+            row = session.execute(
+                select(PendingImportRow).where(
+                    PendingImportRow.id == import_id,
+                    PendingImportRow.group_id == group_id,
+                    PendingImportRow.uploader_user_id == uploader_user_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return [
+                PendingItem(
+                    id=item.id,
+                    date=item.date,
+                    description=item.description,
+                    amount_cents=item.amount_cents,
+                    fingerprint=item.fingerprint,
+                    preselected=item.preselected,
+                )
+                for item in row.items
+            ]
+
+    def delete_pending_import(self, import_id: str) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(PendingImportRow).where(PendingImportRow.id == import_id)
+            ).scalar_one_or_none()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    def record_imported_transactions(
+        self, group_id: str, uploader_user_id: str, pairs: list[tuple[str, str]]
+    ) -> None:
+        """pairs: (fingerprint, expense_id) for each row just turned into an expense."""
+        if not pairs:
+            return
+        with SessionLocal() as session:
+            for fingerprint, expense_id in pairs:
+                session.add(
+                    ImportedTransactionRow(
+                        fingerprint=fingerprint,
+                        group_id=group_id,
+                        uploader_user_id=uploader_user_id,
+                        expense_id=expense_id,
+                    )
+                )
+            session.commit()
 
     # ---- test/dev helper ----
 

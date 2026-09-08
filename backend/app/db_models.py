@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date as date_type
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -91,6 +91,77 @@ class ExpenseSplitRow(Base):
     amount_cents: Mapped[int] = mapped_column(Integer)
 
     expense: Mapped["ExpenseRow"] = relationship(back_populates="splits")
+
+
+class RememberedMerchantRow(Base):
+    """
+    A merchant this user has imported before in this group, so it comes
+    pre-selected on their next upload. Scoped to (user, group) — one
+    person's history never affects another's, or their own other groups.
+    """
+
+    __tablename__ = "remembered_merchants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "group_id", "merchant", name="uq_remembered_user_group_merchant"),
+    )
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id"), index=True)
+    #: Normalized form (see csv_import.normalize_merchant), not the raw description.
+    merchant: Mapped[str] = mapped_column(String(500))
+
+
+class ImportedTransactionRow(Base):
+    """
+    One row per transaction already turned into an expense, keyed by a
+    server-computed fingerprint so re-uploading the same or an overlapping
+    statement can never double-import.
+    """
+
+    __tablename__ = "imported_transactions"
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id"), index=True)
+    uploader_user_id: Mapped[str] = mapped_column(String(36), index=True)
+    expense_id: Mapped[str] = mapped_column(String(36))
+
+
+class PendingImportRow(Base):
+    """
+    A parsed-but-not-yet-confirmed upload. Holding the rows server-side
+    means the client only ever sends back row ids — it never gets to
+    restate (and therefore forge) the amount, date or fingerprint, which
+    product-spec.md requires be derived server-side.
+    """
+
+    __tablename__ = "pending_imports"
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id"), index=True)
+    uploader_user_id: Mapped[str] = mapped_column(String(36), index=True)
+
+    items: Mapped[list["PendingImportItemRow"]] = relationship(
+        back_populates="pending_import", cascade="all, delete-orphan", order_by="PendingImportItemRow.pk"
+    )
+
+
+class PendingImportItemRow(Base):
+    __tablename__ = "pending_import_items"
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    import_id: Mapped[str] = mapped_column(String(36), ForeignKey("pending_imports.id"), index=True)
+    date: Mapped[date_type]
+    description: Mapped[str] = mapped_column(String(500))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    #: Whether the UI should tick this row by default — a hint, never authority.
+    preselected: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    pending_import: Mapped["PendingImportRow"] = relationship(back_populates="items")
 
 
 class SettlementRow(Base):

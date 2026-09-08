@@ -176,6 +176,47 @@ class Settlement(ApiModel):
 
 
 # ---------------------------------------------------------------------------
+# CSV import
+# ---------------------------------------------------------------------------
+
+
+class ReviewRow(ApiModel):
+    """
+    One transaction awaiting the user's yes/no. `preselected` is a UI
+    default (the merchant was imported before in this group), never an
+    authorization — the confirm call's explicit id list is what counts.
+    """
+
+    id: str
+    date: date_type
+    description: str
+    amount_cents: int = Field(alias="amountCents")
+    preselected: bool
+
+
+class SkippedRow(ApiModel):
+    line: int
+    reason: str
+
+
+class ImportPreview(ApiModel):
+    """Result of an upload. Creates nothing — everything here awaits a confirm."""
+
+    import_id: str = Field(alias="importId")
+    rows: list[ReviewRow]
+    skipped: list[SkippedRow]
+    duplicate_count: int = Field(alias="duplicateCount")
+
+
+class ConfirmImportInput(ApiModel):
+    row_ids: list[str] = Field(alias="rowIds")
+
+
+class ImportResult(ApiModel):
+    imported: list[Expense]
+
+
+# ---------------------------------------------------------------------------
 # Balances
 # ---------------------------------------------------------------------------
 

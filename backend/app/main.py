@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import db_models  # noqa: F401  (registers tables on Base.metadata)
 from app.db import Base, engine
-from app.routers import auth, balances, expenses, groups, settlements
+from app.routers import auth, balances, expenses, groups, imports, settlements
 from app.store import seed
 
 Base.metadata.create_all(bind=engine)
@@ -32,6 +32,7 @@ api.include_router(groups.router)
 api.include_router(expenses.router)
 api.include_router(settlements.router)
 api.include_router(balances.router)
+api.include_router(imports.router)
 app.include_router(api)
 
 # Demo data so the API has something to show immediately (e.g. via /docs).
