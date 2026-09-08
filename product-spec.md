@@ -212,9 +212,9 @@ up, log in, and see the groups you're in.
   1. **pre-selected** — its merchant is in this (user, group)'s
      remembered list, or
   2. **unselected** — a merchant this user hasn't imported in this group
-     before.
-  Both kinds are freely selectable and deselectable; the pre-selection is
-  a convenience, not a commitment.
+     before, or one this exact transaction was already imported from.
+  All are freely selectable and deselectable; the pre-selection is a
+  convenience, not a commitment.
 - On submit, exactly the still-selected rows become expenses. Deselected
   rows are not imported, and deselecting does *not* remove a merchant from
   the remembered list — it only skips it for this upload.
@@ -232,10 +232,15 @@ up, log in, and see the groups you're in.
   `splitMethod` = equal across all current group members, `createdByUserId`
   = the uploader. Identical in every other respect to a manually-logged
   expense (creator-only edit/delete, appears in balances, etc.).
-- A transaction this user has already imported into this group is left off
-  the review screen entirely (reported only as a count of skipped
-  duplicates), so re-uploading a file or an overlapping date range can
-  never double-import — see Technical
+- A transaction this user has already imported into this group is **shown
+  with a clear "already imported" note**, left unselected. Re-uploading a
+  file or an overlapping date range therefore imports nothing by default,
+  but the user can still choose to import a flagged row: the duplicate
+  check compares date, merchant and amount, which cannot distinguish a
+  re-uploaded statement from two genuinely identical charges on the same
+  day, and silently hiding the second would lose a real expense. The same
+  applies to two identical rows within one file — both are shown. See
+  Technical
   constraints for the dedupe rule.
 
 ## Non-goals (this version)
@@ -341,9 +346,12 @@ up, log in, and see the groups you're in.
   a small-batch personal-finance tool, not a bulk data pipeline.
 - Duplicate detection: a fingerprint of `(group_id, uploader_user_id,
   date, description, amount)` is computed server-side (never trusted from
-  the client) and checked against already-imported transactions before
-  creating a new expense from a row — re-uploading the same or an
-  overlapping file must not double-import.
+  the client) and checked against already-imported transactions. It drives
+  the "already imported" flag on the review screen — it does not block the
+  import, because those five fields cannot distinguish a re-uploaded
+  statement from two identical real charges. Re-uploading the same or an
+  overlapping file therefore double-imports nothing on its own; only an
+  explicit selection can.
 - Imported expenses are subject to the exact same authorization as any
   other expense (view = linked group members only, edit/delete = creator
   only) — importing doesn't create a new access-control path.

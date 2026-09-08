@@ -621,10 +621,11 @@ paths:
 
         Rows with a zero or negative amount (payments, credits, refunds) are
         dropped silently and never appear. Rows the caller has already
-        imported into this group are also dropped, counted only in
-        `duplicateCount`, so re-uploading the same or an overlapping
-        statement can never double-import. Rows that fail to parse do not
-        fail the file — they come back in `skipped` with a line number.
+        imported into this group *are* returned, flagged
+        `alreadyImported` and never pre-selected, so a re-upload does not
+        double-import by default but an intentional duplicate remains
+        possible. Rows that fail to parse do not fail the file — they come
+        back in `skipped` with a line number.
 
 
         The uploaded file itself is never stored (product-spec.md
@@ -1252,6 +1253,17 @@ components:
             True when this merchant was imported into this group by this
             user before, so the UI should tick it by default. A hint only —
             the confirm call's id list decides what is actually imported.
+            Never true for a row that is already imported.
+        alreadyImported:
+          type: boolean
+          description: >
+            True when this exact transaction (same date, merchant and
+            amount) was already imported by this caller into this group.
+            Such rows are still shown and still importable — the fingerprint
+            cannot tell a re-uploaded statement from two genuinely identical
+            charges on the same day, so hiding them would silently drop a
+            real expense. They are never pre-selected: importing a duplicate
+            has to be deliberate.
 
     SkippedRow:
       type: object
@@ -1266,7 +1278,7 @@ components:
 
     ImportPreview:
       type: object
-      required: [importId, rows, skipped, duplicateCount]
+      required: [importId, rows, skipped]
       properties:
         importId:
           type: string
@@ -1279,11 +1291,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SkippedRow"
-        duplicateCount:
-          type: integer
-          description: >
-            How many rows were left out because this user already imported
-            them into this group. They are never shown for review.
 
     ConfirmImportInput:
       type: object

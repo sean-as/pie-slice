@@ -432,24 +432,22 @@ export class MockExpenseService implements ExpenseServiceApi {
     const remembered = new Set(db.rememberedMerchants[scope] ?? []);
 
     const items: PendingItem[] = [];
-    const seenInFile = new Set<string>();
-    let duplicateCount = 0;
 
     for (const row of parsed.rows) {
       const rowFingerprint = fingerprint(groupId, userId, row.date, row.description, row.amountCents);
-      // Already imported, or an identical row earlier in this same file.
-      if (alreadyImported.has(rowFingerprint) || seenInFile.has(rowFingerprint)) {
-        duplicateCount++;
-        continue;
-      }
-      seenInFile.add(rowFingerprint);
+      // Previously imported rows are shown, flagged, rather than dropped —
+      // the fingerprint can't tell a re-upload from two identical real
+      // charges. Never pre-selected: a duplicate must be deliberate.
+      const seenBefore = alreadyImported.has(rowFingerprint);
 
       items.push({
         id: id(),
         date: row.date,
         description: row.description,
         amountCents: row.amountCents,
-        preselected: remembered.has(normalizeMerchant(row.description)),
+        category: row.category ?? null,
+        preselected: !seenBefore && remembered.has(normalizeMerchant(row.description)),
+        alreadyImported: seenBefore,
         fingerprint: rowFingerprint,
       });
     }
@@ -463,7 +461,6 @@ export class MockExpenseService implements ExpenseServiceApi {
       // Without the fingerprint: it's derived, never handed to the client.
       rows: items.map(({ fingerprint: _fingerprint, ...row }) => row),
       skipped: parsed.skipped,
-      duplicateCount,
     });
   }
 
@@ -505,9 +502,13 @@ export class MockExpenseService implements ExpenseServiceApi {
     db.expenses[groupId] = [...(db.expenses[groupId] ?? []), ...imported];
 
     const importedItems = pending.items.filter((item) => selected.has(item.id));
+    // A fingerprint may already be recorded (a deliberately re-imported
+    // duplicate, or two identical rows in one file), so keep the set unique.
     db.importedFingerprints[scope] = [
-      ...(db.importedFingerprints[scope] ?? []),
-      ...importedItems.map((item) => item.fingerprint),
+      ...new Set([
+        ...(db.importedFingerprints[scope] ?? []),
+        ...importedItems.map((item) => item.fingerprint),
+      ]),
     ];
     // Importing is what remembers a merchant — there's no separate opt-in,
     // and leaving a row unticked never forgets one.

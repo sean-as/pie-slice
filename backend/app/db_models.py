@@ -184,6 +184,7 @@ class PendingImportItemRow(Base):
     fingerprint: Mapped[str] = mapped_column(String(64))
     #: Whether the UI should tick this row by default — a hint, never authority.
     preselected: Mapped[bool] = mapped_column(Boolean, default=False)
+    already_imported: Mapped[bool] = mapped_column(Boolean, default=False)
 
     pending_import: Mapped["PendingImportRow"] = relationship(back_populates="items")
 

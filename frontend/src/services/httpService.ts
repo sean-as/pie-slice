@@ -218,6 +218,10 @@ export class HttpExpenseService implements ExpenseServiceApi {
       body.append("amountColumn", mapping.amountColumn);
       body.append("dateFormat", mapping.dateFormat);
       body.append("amountSign", mapping.amountSign);
+      // Optional, and omitted rather than sent blank — but it must be sent
+      // when set, or the category the user mapped is silently dropped here
+      // and never reaches the expense.
+      if (mapping.categoryColumn) body.append("categoryColumn", mapping.categoryColumn);
     }
     return request<ImportPreview>(`/groups/${groupId}/imports`, { method: "POST", body });
   }

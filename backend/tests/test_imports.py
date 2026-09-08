@@ -240,8 +240,15 @@ class TestRememberedMerchants:
         assert elsewhere["rows"][0]["preselected"] is False
 
 
-class TestDeduplication:
-    def test_reupload_hides_already_imported_rows(self, client, group_with_members):
+class TestAlreadyImported:
+    """
+    A transaction imported before is shown and flagged, not hidden. The
+    fingerprint can't tell a re-uploaded statement from two genuinely
+    identical charges on the same day, so hiding one would silently lose a
+    real expense — the user decides.
+    """
+
+    def test_reupload_flags_rather_than_hides(self, client, group_with_members):
         g = group_with_members
         first = _upload(
             client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99", "2026-08-27,Shell,40.00"
@@ -249,7 +256,6 @@ class TestDeduplication:
         comcast = next(r for r in first["rows"] if r["description"] == "Comcast")
         _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [comcast["id"]])
 
-        # Overlapping re-upload: Comcast is gone, Shell (never imported) stays.
         second = _upload(
             client,
             g["group"]["id"],
@@ -258,34 +264,92 @@ class TestDeduplication:
             "2026-08-27,Shell,40.00",
             "2026-09-01,Trader Joes,25.00",
         ).json()
-        assert [r["description"] for r in second["rows"]] == ["Shell", "Trader Joes"]
-        assert second["duplicateCount"] == 1
+        by_description = {r["description"]: r for r in second["rows"]}
+        assert sorted(by_description) == ["Comcast", "Shell", "Trader Joes"]
+        assert by_description["Comcast"]["alreadyImported"] is True
+        assert by_description["Shell"]["alreadyImported"] is False
 
-    def test_identical_rows_within_one_file_collapse(self, client, group_with_members):
+    def test_an_already_imported_row_is_never_preselected(self, client, group_with_members):
+        g = group_with_members
+        first = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [first["rows"][0]["id"]])
+
+        # Comcast is a remembered merchant now, which would normally tick it
+        # — but this exact transaction is already in, so it must not be.
+        second = _upload(
+            client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99", "2026-09-26,Comcast,79.99"
+        ).json()
+        by_date = {r["date"]: r for r in second["rows"]}
+        assert by_date["2026-08-26"]["preselected"] is False
+        assert by_date["2026-08-26"]["alreadyImported"] is True
+        # A later month's charge from the same merchant is new, and is
+        # pre-selected as usual.
+        assert by_date["2026-09-26"]["preselected"] is True
+        assert by_date["2026-09-26"]["alreadyImported"] is False
+
+    def test_a_flagged_row_can_still_be_imported_deliberately(self, client, group_with_members):
+        g = group_with_members
+        first = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [first["rows"][0]["id"]])
+
+        second = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        result = _confirm(
+            client, g["group"]["id"], g["alice_headers"], second["importId"], [second["rows"][0]["id"]]
+        )
+        assert result.status_code == 200
+        assert len(result.json()["imported"]) == 1
+        # Deliberately imported twice, so it genuinely appears twice.
+        assert len(_expenses(client, g["group"]["id"], g["alice_headers"])) == 2
+
+    def test_skipping_a_flagged_row_imports_nothing(self, client, group_with_members):
+        g = group_with_members
+        first = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [first["rows"][0]["id"]])
+
+        second = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        _confirm(client, g["group"]["id"], g["alice_headers"], second["importId"], [])
+        assert len(_expenses(client, g["group"]["id"], g["alice_headers"])) == 1
+
+    def test_identical_rows_within_one_file_are_both_shown(self, client, group_with_members):
+        """Two coffees on the same day at the same price is a real thing."""
         g = group_with_members
         preview = _upload(
             client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99", "2026-08-26,Comcast,79.99"
         ).json()
-        assert len(preview["rows"]) == 1
-        assert preview["duplicateCount"] == 1
+        assert len(preview["rows"]) == 2
+        assert [r["alreadyImported"] for r in preview["rows"]] == [False, False]
 
-    def test_dedupe_is_per_uploader(self, client, group_with_members):
+    def test_both_copies_can_be_imported(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload(
+            client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99", "2026-08-26,Comcast,79.99"
+        ).json()
+        _confirm(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            preview["importId"],
+            [r["id"] for r in preview["rows"]],
+        )
+        assert len(_expenses(client, g["group"]["id"], g["alice_headers"])) == 2
+
+    def test_flagging_is_per_uploader(self, client, group_with_members):
         g = group_with_members
         first = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
         _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [first["rows"][0]["id"]])
 
         # Bob genuinely paid his own Comcast bill — not Alice's duplicate.
         bob = _upload(client, g["group"]["id"], g["bob_headers"], "2026-08-26,Comcast,79.99").json()
-        assert len(bob["rows"]) == 1
-        assert bob["duplicateCount"] == 0
+        assert bob["rows"][0]["alreadyImported"] is False
 
-    def test_same_merchant_different_amount_is_not_a_duplicate(self, client, group_with_members):
+    def test_same_merchant_different_amount_is_not_flagged(self, client, group_with_members):
         g = group_with_members
         first = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
         _confirm(client, g["group"]["id"], g["alice_headers"], first["importId"], [first["rows"][0]["id"]])
 
         second = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,89.99").json()
-        assert len(second["rows"]) == 1
+        assert second["rows"][0]["alreadyImported"] is False
+
 
 
 CHASE_STYLE = (

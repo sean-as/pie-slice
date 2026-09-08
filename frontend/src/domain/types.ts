@@ -87,9 +87,17 @@ export type ReviewRow = {
   /**
    * True when this user has imported this merchant into this group before,
    * so the UI ticks it by default. A default, not a decision — the user can
-   * untick it, and ticking a new merchant is equally allowed.
+   * untick it, and ticking a new merchant is equally allowed. Never true
+   * for a row that is already imported.
    */
   preselected: boolean;
+  /**
+   * True when this exact transaction was already imported by this user into
+   * this group. Still shown and still importable: the check compares date,
+   * merchant and amount, which can't tell a re-uploaded statement from two
+   * identical real charges — so the user decides, warned.
+   */
+  alreadyImported: boolean;
 };
 
 /** A CSV row that couldn't be parsed. Reported to the user, never fatal. */
@@ -102,8 +110,6 @@ export type ImportPreview = {
   importId: string;
   rows: ReviewRow[];
   skipped: SkippedRow[];
-  /** Rows left out because this user already imported them into this group. */
-  duplicateCount: number;
 };
 
 export type DateFormat = "iso" | "mdy" | "dmy";

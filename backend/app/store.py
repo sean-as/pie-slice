@@ -66,6 +66,7 @@ class PendingItem:
     fingerprint: str
     preselected: bool
     category: str | None = None
+    already_imported: bool = False
 
 
 def _user_row_to_stored(row: UserRow) -> StoredUser:
@@ -433,6 +434,7 @@ class Store:
                     fingerprint=item.fingerprint,
                     preselected=item.preselected,
                     category=item.category,
+                    already_imported=item.already_imported,
                 )
                 for item in items
             ]
@@ -464,6 +466,7 @@ class Store:
                     fingerprint=item.fingerprint,
                     preselected=item.preselected,
                     category=item.category,
+                    already_imported=item.already_imported,
                 )
                 for item in row.items
             ]
@@ -483,8 +486,17 @@ class Store:
         """pairs: (fingerprint, expense_id) for each row just turned into an expense."""
         if not pairs:
             return
+        # A fingerprint may already be recorded: the user can deliberately
+        # re-import a flagged duplicate, and one file can hold two identical
+        # real charges. The table marks "this has been seen", so the first
+        # record stands and later ones are no-ops rather than a constraint
+        # violation.
+        known = self.known_fingerprints(group_id, uploader_user_id, [f for f, _ in pairs])
         with SessionLocal() as session:
             for fingerprint, expense_id in pairs:
+                if fingerprint in known:
+                    continue
+                known.add(fingerprint)
                 session.add(
                     ImportedTransactionRow(
                         fingerprint=fingerprint,

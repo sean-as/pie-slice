@@ -232,6 +232,10 @@ class ReviewRow(ApiModel):
     amount_cents: int = Field(alias="amountCents")
     category: str | None = None
     preselected: bool
+    #: This exact transaction was already imported by this user into this
+    #: group. Shown anyway (flagged, never pre-selected) because the
+    #: fingerprint can't tell a real repeat charge from a re-upload.
+    already_imported: bool = Field(alias="alreadyImported")
 
 
 class SkippedRow(ApiModel):
@@ -245,7 +249,6 @@ class ImportPreview(ApiModel):
     import_id: str = Field(alias="importId")
     rows: list[ReviewRow]
     skipped: list[SkippedRow]
-    duplicate_count: int = Field(alias="duplicateCount")
 
 
 class ConfirmImportInput(ApiModel):

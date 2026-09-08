@@ -172,16 +172,14 @@ async def upload_csv(
     remembered = store.remembered_merchants(current_user.id, group.id)
 
     items: list[PendingItem] = []
-    duplicate_count = 0
-    seen_in_file: set[str] = set()
 
     for row, row_fingerprint in zip(parsed.rows, fingerprints):
-        # Already imported, or a repeat of an identical row earlier in this
-        # same file — either way it must not become a second expense.
-        if row_fingerprint in already_imported or row_fingerprint in seen_in_file:
-            duplicate_count += 1
-            continue
-        seen_in_file.add(row_fingerprint)
+        # A previously imported transaction is shown, flagged, rather than
+        # dropped: the fingerprint can't distinguish a re-uploaded statement
+        # from two genuinely identical charges on the same day, so hiding it
+        # would silently lose a real expense. Never pre-selected, though —
+        # importing a duplicate has to be a deliberate act.
+        seen_before = row_fingerprint in already_imported
 
         items.append(
             PendingItem(
@@ -190,8 +188,9 @@ async def upload_csv(
                 description=row.description,
                 amount_cents=row.amount_cents,
                 fingerprint=row_fingerprint,
-                preselected=normalize_merchant(row.description) in remembered,
+                preselected=(not seen_before) and normalize_merchant(row.description) in remembered,
                 category=row.category,
+                already_imported=seen_before,
             )
         )
 
@@ -207,11 +206,11 @@ async def upload_csv(
                 amount_cents=item.amount_cents,
                 category=item.category,
                 preselected=item.preselected,
+                already_imported=item.already_imported,
             )
             for item in items
         ],
         skipped=[SkippedRow(line=s.line, reason=s.reason) for s in parsed.skipped],
-        duplicate_count=duplicate_count,
     )
 
 

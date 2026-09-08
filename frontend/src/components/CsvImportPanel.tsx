@@ -101,6 +101,8 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
     }
   }
 
+  const duplicateCount = preview?.rows.filter((r) => r.alreadyImported).length ?? 0;
+
   return (
     <section className="import-panel">
       <h2>Import from CSV</h2>
@@ -126,12 +128,14 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
         <>
           <p className="meta">
             {preview.rows.length === 0
-              ? "Nothing new to import in that file."
+              ? "Nothing to import in that file."
               : `${preview.rows.length} transaction${preview.rows.length === 1 ? "" : "s"} to review — ${
                   selected.size
                 } selected.`}
-            {preview.duplicateCount > 0 &&
-              ` ${preview.duplicateCount} already imported.`}
+            {duplicateCount > 0 &&
+              ` ${duplicateCount} ${
+                duplicateCount === 1 ? "was" : "were"
+              } imported before and left unticked.`}
             {preview.skipped.length > 0 &&
               ` ${preview.skipped.length} row${preview.skipped.length === 1 ? "" : "s"} couldn't be read.`}
           </p>
@@ -166,8 +170,17 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
                         <span className="meta">
                           {row.date}
                           {row.category && ` · ${row.category}`}
-                          {row.preselected && " · imported before"}
+                          {row.preselected && " · merchant imported before"}
                         </span>
+                        {row.alreadyImported && (
+                          <>
+                            <br />
+                            <span className="warning">
+                              Already imported — ticking this adds a second copy. Do that only if
+                              it's genuinely a separate charge for the same amount on the same day.
+                            </span>
+                          </>
+                        )}
                       </span>
                     </label>
                   </li>
