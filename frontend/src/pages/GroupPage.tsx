@@ -7,6 +7,7 @@ import { ExpenseForm } from "../components/ExpenseForm";
 import { SettlementForm } from "../components/SettlementForm";
 import { BalancesView } from "../components/BalancesView";
 import { CsvImportPanel } from "../components/CsvImportPanel";
+import { ActionsMenu } from "../components/ActionsMenu";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 export function GroupPage() {
@@ -190,14 +191,10 @@ export function GroupPage() {
                 </span>
               </span>
               {exp.createdByUserId === user.id && (
-                <span className="actions">
-                  <button className="secondary" onClick={() => setEditingExpenseId(exp.id)}>
-                    Edit
-                  </button>
-                  <button className="danger" onClick={() => handleDeleteExpense(exp.id)}>
-                    Delete
-                  </button>
-                </span>
+                <ActionsMenu
+                  onEdit={() => setEditingExpenseId(exp.id)}
+                  onDelete={() => handleDeleteExpense(exp.id)}
+                />
               )}
             </li>
           )
@@ -249,14 +246,10 @@ export function GroupPage() {
                 </span>
               </span>
               {s.createdByUserId === user.id && (
-                <span className="actions">
-                  <button className="secondary" onClick={() => setEditingSettlementId(s.id)}>
-                    Edit
-                  </button>
-                  <button className="danger" onClick={() => handleDeleteSettlement(s.id)}>
-                    Delete
-                  </button>
-                </span>
+                <ActionsMenu
+                  onEdit={() => setEditingSettlementId(s.id)}
+                  onDelete={() => handleDeleteSettlement(s.id)}
+                />
               )}
             </li>
           )
