@@ -523,6 +523,74 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /groups/{groupId}/imports/inspect:
+    post:
+      tags: [imports]
+      operationId: inspectCsv
+      summary: Read a CSV's shape so the user can map its columns
+      description: >
+        Maps to `ExpenseServiceApi.inspectCsv`. **Parses no transactions,
+        creates nothing, stores nothing** — it returns the file's column
+        names, a few raw sample rows, and a suggested mapping, so the user
+        can confirm or correct how their bank's export should be read
+        before any transaction is interpreted.
+
+
+        The suggestion is seeded from the mapping this caller last used for
+        this group (a bank's format doesn't change month to month), then by
+        the conventional `date`/`description`/`amount` header names.
+        `unresolved` lists the roles it couldn't fill in, which the user
+        must choose.
+
+
+        `dateFormatAmbiguous` is true when the date column holds slash
+        dates whose day parts are all ≤ 12 — `MM/DD/YYYY` and `DD/MM/YYYY`
+        are then indistinguishable, and the API deliberately does not
+        guess, since picking wrong would silently import transactions on
+        the wrong dates. Show `sampleRows` against the chosen format and
+        let the user settle it.
+
+
+        Because nothing is stored here, the subsequent upload re-sends the
+        file. That is deliberate: statements are never retained server-side
+        (product-spec.md non-goals).
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: The file's columns, sample rows, and a suggested mapping.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileShape"
+        "400":
+          description: The file is unreadable, empty, or has no header row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The file exceeds the upload size limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /groups/{groupId}/imports:
     post:
       tags: [imports]
@@ -533,6 +601,15 @@ paths:
         parses the file, stages the rows server-side, and returns them all
         for review; `POST .../confirm` is what turns the chosen ones into
         expenses.
+
+
+        The mapping form fields say how to read the file — normally the
+        ones the user confirmed from `.../inspect`. The three column names
+        travel together: send all three or none (omitting them assumes the
+        conventional `date`/`description`/`amount` headers). A mapping that
+        parses is remembered for this (caller, group) and pre-fills their
+        next inspect; one that names a column the file doesn't have is
+        rejected and *not* remembered.
 
 
         Each returned row carries `preselected: true` when the caller has
@@ -566,10 +643,22 @@ paths:
                   type: string
                   format: binary
                   description: >
-                    CSV with a header row and `date` (ISO `YYYY-MM-DD`),
-                    `description`, and `amount` (plain decimal dollars)
-                    columns. Header names are matched case-insensitively and
-                    column order is not assumed. Max 1 MB / 2000 rows.
+                    CSV with a header row, one row per transaction. Column
+                    order is never assumed and extra columns are ignored.
+                    Max 1 MB / 2000 rows.
+                dateColumn:
+                  type: string
+                  description: Header name of the date column. Matched case-insensitively.
+                descriptionColumn:
+                  type: string
+                  description: Header name of the description (merchant) column.
+                amountColumn:
+                  type: string
+                  description: Header name of the amount column.
+                dateFormat:
+                  $ref: "#/components/schemas/DateFormat"
+                amountSign:
+                  $ref: "#/components/schemas/AmountSign"
       responses:
         "200":
           description: Parsed transactions awaiting review. Nothing has been created.
@@ -1202,3 +1291,78 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Expense"
+
+    DateFormat:
+      type: string
+      description: >
+        How to read the date column. ISO is auto-detected; `mdy` and `dmy`
+        are indistinguishable for days <= 12 and are never guessed between
+        — the user chooses.
+      enum: [iso, mdy, dmy]
+      default: iso
+
+    AmountSign:
+      type: string
+      description: >
+        Which sign means a charge in the amount column. Banks differ: some
+        write purchases as positive and payments as negative, others the
+        reverse. Rows on the other side of the ledger are silently dropped,
+        so choosing wrong imports nothing rather than importing wrongly.
+      enum: [positive_is_charge, negative_is_charge]
+      default: positive_is_charge
+
+    ColumnMapping:
+      type: object
+      description: How to read one bank's export.
+      required: [dateColumn, descriptionColumn, amountColumn, dateFormat, amountSign]
+      properties:
+        dateColumn:
+          type: string
+          minLength: 1
+        descriptionColumn:
+          type: string
+          minLength: 1
+        amountColumn:
+          type: string
+          minLength: 1
+        dateFormat:
+          $ref: "#/components/schemas/DateFormat"
+        amountSign:
+          $ref: "#/components/schemas/AmountSign"
+
+    FileShape:
+      type: object
+      description: >
+        What a file looks like before any transaction is read from it.
+        Nothing has been parsed into transactions and nothing is stored.
+      required: [columns, sampleRows, suggested, unresolved, dateFormatAmbiguous]
+      properties:
+        columns:
+          type: array
+          description: Header names, in file order.
+          items:
+            type: string
+        sampleRows:
+          type: array
+          description: >
+            The first few raw data rows, each keyed by column name, so the
+            user can see how their mapping reads real data.
+          items:
+            type: object
+            additionalProperties:
+              type: string
+        suggested:
+          $ref: "#/components/schemas/ColumnMapping"
+        unresolved:
+          type: array
+          description: >
+            Roles the suggestion could not fill in — the user must choose
+            these. Empty when the file was fully recognized.
+          items:
+            type: string
+            enum: [date, description, amount]
+        dateFormatAmbiguous:
+          type: boolean
+          description: >
+            True when MM/DD/YYYY and DD/MM/YYYY cannot be told apart from
+            this file's data. Show the user a sample row and let them pick.

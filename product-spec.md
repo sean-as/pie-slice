@@ -67,6 +67,14 @@ up, log in, and see the groups you're in.
     Other members cannot.
 15. As a linked member of a group, I can upload a CSV of my own credit card
     transactions (date, description, amount) into that group.
+15a. As a user whose bank doesn't export the columns this app expects, I can
+    say which column is the date, the description and the amount, whether a
+    charge is a positive or a negative number, and what date format the file
+    uses — so I don't have to reformat the export by hand. Whatever the app
+    can work out from the file is filled in for me already.
+15b. As a returning user, the choices I made last time I uploaded to this
+    group are filled in for me, since my bank's format doesn't change month
+    to month.
 16. Upon upload, I'm shown every transaction in the file to review before
     anything is created; transactions from merchants I've imported before
     *in this group* come pre-selected, so a recurring statement is mostly
@@ -163,11 +171,25 @@ up, log in, and see the groups you're in.
   (prevents rounding-error drift across many expenses).
 
 **CSV import**
-- Expected file format: a header row followed by rows of `date,
-  description, amount` (see Technical constraints for the exact grammar).
-  Only rows with a positive amount are considered — zero/negative rows
-  (payments, credits, refunds) are silently skipped: not imported and not
-  shown on the review screen at all.
+- Expected file format: a header row followed by data rows (see Technical
+  constraints for the exact grammar). Banks disagree on nearly everything
+  about that file, so before reviewing transactions the user confirms how
+  to read it:
+  - **which column** holds the date, the description, and the amount;
+  - **which sign means a charge** — some banks write purchases as positive
+    and payments as negative, others do the reverse;
+  - **what date format** the date column uses — ISO `YYYY-MM-DD`,
+    `MM/DD/YYYY`, or `DD/MM/YYYY`.
+  Anything the app can work out from the file is pre-filled, so a file
+  that already uses ISO dates and `date`/`description`/`amount` headers
+  needs no input. `MM/DD/YYYY` and `DD/MM/YYYY` are indistinguishable for
+  days ≤ 12, so the app never guesses between them — it shows how a real
+  row from the file reads under the current choice and lets the user
+  correct it.
+- Only rows that are a **charge** under the chosen sign convention are
+  considered — zero rows and rows on the other side (payments, credits,
+  refunds) are silently skipped: not imported and not shown on the review
+  screen at all.
 - "Merchant" = the transaction's `description` field. Matching against a
   remembered merchant is on that field (exact/normalized match — see Open
   / not yet decided for how forgiving that normalization is).
@@ -221,9 +243,11 @@ up, log in, and see the groups you're in.
 - Native mobile app — web only.
 - Bank/card account aggregation (Plaid or similar) — CSV upload only, no
   live bank connection, no stored bank credentials of any kind.
-- Configurable CSV column mapping — one fixed date/description/amount
-  format (see Technical constraints); reformatting a bank's export to
-  match is on the user.
+- CSV shapes that aren't one-row-per-transaction with a single amount
+  column: separate debit/credit columns, a running-balance column, multi-
+  line preamble before the header, or a fixed-width/non-CSV export.
+  Reformatting those is still on the user. (Column *names*, amount sign,
+  and date format are configurable — see Acceptance criteria.)
 - Per-merchant custom split method/ratio — CSV-imported expenses are
   always equal-split (like any new expense); edit afterward if a specific
   one needs a different split.
@@ -265,10 +289,21 @@ up, log in, and see the groups you're in.
   native app.
 
 **CSV import**
-- CSV grammar: header row required, columns `date` (ISO `YYYY-MM-DD`),
-  `description` (free text), `amount` (plain decimal dollars, e.g.
-  `42.50`; positive = charge). Header names matched case-insensitively;
-  column order not assumed to be fixed as long as headers are present.
+- CSV grammar: header row required; one row per transaction; three columns
+  are used (date, description, amount) and any others are ignored. Column
+  order is never assumed. Which column is which comes from the user's
+  mapping, defaulting to a case-insensitive match on the names `date`,
+  `description` and `amount` when the file happens to use them.
+- Amounts are plain decimal dollars (e.g. `42.50`), optionally with a
+  currency symbol or thousands separators. Which sign means a charge is
+  the user's choice, defaulting to positive.
+- Dates are ISO `YYYY-MM-DD`, `MM/DD/YYYY`, or `DD/MM/YYYY`, by the user's
+  choice. ISO is auto-detected; the two slash formats are ambiguous for
+  days ≤ 12 and are never guessed between.
+- The user's mapping choices are remembered per **(user, group)** and
+  pre-filled on their next upload — they are a convenience only, never
+  applied without being shown, since a silently wrong mapping would
+  quietly import wrong amounts.
 - Cell contents are always treated as plain text, never evaluated —
   standard CSV/spreadsheet formula-injection protection (a `description`
   starting with `=`, `+`, `-`, or `@` must not be treated specially by

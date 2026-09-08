@@ -26,6 +26,7 @@ from app.db_models import (
     ExpenseSplitRow,
     GroupRow,
     ImportedTransactionRow,
+    ImportMappingRow,
     MemberRow,
     PendingImportItemRow,
     PendingImportRow,
@@ -34,7 +35,7 @@ from app.db_models import (
     TokenRow,
     UserRow,
 )
-from app.models import Expense, Group, Member, Settlement, Split, User
+from app.models import ColumnMapping, Expense, Group, Member, Settlement, Split, User
 
 
 def new_id() -> str:
@@ -356,6 +357,41 @@ class Store:
         with SessionLocal() as session:
             for merchant in sorted(new):
                 session.add(RememberedMerchantRow(user_id=user_id, group_id=group_id, merchant=merchant))
+            session.commit()
+
+    def get_import_mapping(self, user_id: str, group_id: str) -> ColumnMapping | None:
+        """The mapping this user last used for this group, if any."""
+        with SessionLocal() as session:
+            row = session.execute(
+                select(ImportMappingRow).where(
+                    ImportMappingRow.user_id == user_id, ImportMappingRow.group_id == group_id
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return ColumnMapping(
+                date_column=row.date_column,
+                description_column=row.description_column,
+                amount_column=row.amount_column,
+                date_format=row.date_format,  # type: ignore[arg-type]
+                amount_sign=row.amount_sign,  # type: ignore[arg-type]
+            )
+
+    def save_import_mapping(self, user_id: str, group_id: str, mapping: ColumnMapping) -> None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(ImportMappingRow).where(
+                    ImportMappingRow.user_id == user_id, ImportMappingRow.group_id == group_id
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = ImportMappingRow(user_id=user_id, group_id=group_id)
+                session.add(row)
+            row.date_column = mapping.date_column
+            row.description_column = mapping.description_column
+            row.amount_column = mapping.amount_column
+            row.date_format = mapping.date_format
+            row.amount_sign = mapping.amount_sign
             session.commit()
 
     def known_fingerprints(self, group_id: str, uploader_user_id: str, candidates: list[str]) -> set[str]:

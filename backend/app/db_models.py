@@ -112,6 +112,26 @@ class RememberedMerchantRow(Base):
     merchant: Mapped[str] = mapped_column(String(500))
 
 
+class ImportMappingRow(Base):
+    """
+    The last column mapping this user used for this group. A bank's export
+    format doesn't change month to month, so this is pre-filled on their
+    next upload — shown for confirmation, never applied silently.
+    """
+
+    __tablename__ = "import_mappings"
+    __table_args__ = (UniqueConstraint("user_id", "group_id", name="uq_import_mapping_user_group"),)
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id"), index=True)
+    date_column: Mapped[str] = mapped_column(String(255))
+    description_column: Mapped[str] = mapped_column(String(255))
+    amount_column: Mapped[str] = mapped_column(String(255))
+    date_format: Mapped[str] = mapped_column(String(10))
+    amount_sign: Mapped[str] = mapped_column(String(30))
+
+
 class ImportedTransactionRow(Base):
     """
     One row per transaction already turned into an expense, keyed by a

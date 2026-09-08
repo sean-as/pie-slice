@@ -286,3 +286,178 @@ class TestDeduplication:
 
         second = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,89.99").json()
         assert len(second["rows"]) == 1
+
+
+CHASE_STYLE = (
+    "Transaction Date,Post Date,Merchant,Debit,Category\n"
+    "09/25/2026,09/26/2026,Comcast,-79.99,Utilities\n"
+    "09/26/2026,09/27/2026,Payment Received,500.00,Payment\n"
+).encode("utf-8")
+
+
+def _inspect(client, group_id, headers, content=CHASE_STYLE):
+    return client.post(
+        f"/api/groups/{group_id}/imports/inspect",
+        files={"file": ("statement.csv", content, "text/csv")},
+        headers=headers,
+    )
+
+
+def _upload_mapped(client, group_id, headers, content=CHASE_STYLE, **mapping):
+    return client.post(
+        f"/api/groups/{group_id}/imports",
+        files={"file": ("statement.csv", content, "text/csv")},
+        data=mapping,
+        headers=headers,
+    )
+
+
+CHASE_MAPPING = {
+    "dateColumn": "Transaction Date",
+    "descriptionColumn": "Merchant",
+    "amountColumn": "Debit",
+    "dateFormat": "mdy",
+    "amountSign": "negative_is_charge",
+}
+
+
+class TestInspect:
+    def test_returns_columns_and_samples(self, client, group_with_members):
+        g = group_with_members
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
+        assert shape["columns"] == ["Transaction Date", "Post Date", "Merchant", "Debit", "Category"]
+        assert shape["sampleRows"][0]["Merchant"] == "Comcast"
+
+    def test_reports_columns_it_cannot_guess(self, client, group_with_members):
+        g = group_with_members
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
+        assert sorted(shape["unresolved"]) == ["amount", "date", "description"]
+
+    def test_recognizes_a_conventional_file(self, client, group_with_members):
+        g = group_with_members
+        shape = _inspect(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            b"date,description,amount\n2026-08-26,Comcast,79.99\n",
+        ).json()
+        assert shape["unresolved"] == []
+        assert shape["suggested"]["dateColumn"] == "date"
+        assert shape["dateFormatAmbiguous"] is False
+
+    def test_creates_nothing(self, client, group_with_members):
+        g = group_with_members
+        _inspect(client, g["group"]["id"], g["alice_headers"])
+        assert _expenses(client, g["group"]["id"], g["alice_headers"]) == []
+
+    def test_non_member_cannot_inspect(self, client, group_with_members, signup):
+        g = group_with_members
+        mallory_headers, _ = signup(email="mallory@example.com", display_name="Mallory")
+        assert _inspect(client, g["group"]["id"], mallory_headers).status_code == 404
+
+
+class TestMappedUpload:
+    def test_reads_a_bank_that_agrees_on_nothing(self, client, group_with_members):
+        """Foreign column names, negative charges, and US dates at once."""
+        g = group_with_members
+        preview = _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING).json()
+
+        assert [r["description"] for r in preview["rows"]] == ["Comcast"]
+        assert preview["rows"][0]["amountCents"] == 7999
+        assert preview["rows"][0]["date"] == "2026-09-25"
+
+    def test_wrong_sign_convention_finds_the_other_side_of_the_ledger(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            **{**CHASE_MAPPING, "amountSign": "positive_is_charge"},
+        ).json()
+        assert [r["description"] for r in preview["rows"]] == ["Payment Received"]
+
+    def test_naming_a_missing_column_is_rejected(self, client, group_with_members):
+        g = group_with_members
+        response = _upload_mapped(
+            client, g["group"]["id"], g["alice_headers"], **{**CHASE_MAPPING, "amountColumn": "Nope"}
+        )
+        assert response.status_code == 400
+
+    def test_partial_mapping_is_rejected(self, client, group_with_members):
+        g = group_with_members
+        response = _upload_mapped(
+            client, g["group"]["id"], g["alice_headers"], dateColumn="Transaction Date"
+        )
+        assert response.status_code == 400
+
+    def test_no_mapping_still_works_for_conventional_files(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload(client, g["group"]["id"], g["alice_headers"], "2026-08-26,Comcast,79.99").json()
+        assert len(preview["rows"]) == 1
+
+    def test_unknown_date_format_is_rejected(self, client, group_with_members):
+        g = group_with_members
+        response = _upload_mapped(
+            client, g["group"]["id"], g["alice_headers"], **{**CHASE_MAPPING, "dateFormat": "martian"}
+        )
+        assert response.status_code == 422
+
+    def test_mapped_import_produces_an_ordinary_expense(self, client, group_with_members):
+        g = group_with_members
+        preview = _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING).json()
+        expense = _confirm(
+            client, g["group"]["id"], g["alice_headers"], preview["importId"], [preview["rows"][0]["id"]]
+        ).json()["imported"][0]
+
+        assert expense["amountCents"] == 7999
+        assert expense["date"] == "2026-09-25"
+        assert expense["payerId"] == g["alice_member"]["id"]
+        assert expense["splitMethod"] == "equal"
+
+
+class TestRememberedMapping:
+    def test_next_inspect_is_prefilled_from_the_last_upload(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING)
+
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
+        assert shape["unresolved"] == []
+        assert shape["suggested"]["descriptionColumn"] == "Merchant"
+        assert shape["suggested"]["amountSign"] == "negative_is_charge"
+        assert shape["suggested"]["dateFormat"] == "mdy"
+
+    def test_a_rejected_mapping_is_not_remembered(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(
+            client, g["group"]["id"], g["alice_headers"], **{**CHASE_MAPPING, "amountColumn": "Nope"}
+        )
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
+        assert sorted(shape["unresolved"]) == ["amount", "date", "description"]
+
+    def test_mapping_is_per_user(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING)
+
+        # Bob's bank is his own business — Alice's mapping must not leak.
+        shape = _inspect(client, g["group"]["id"], g["bob_headers"]).json()
+        assert sorted(shape["unresolved"]) == ["amount", "date", "description"]
+
+    def test_mapping_is_per_group(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING)
+
+        other = client.post("/api/groups", json={"name": "Apartment"}, headers=g["alice_headers"]).json()
+        shape = _inspect(client, other["id"], g["alice_headers"]).json()
+        assert sorted(shape["unresolved"]) == ["amount", "date", "description"]
+
+    def test_a_later_mapping_replaces_the_earlier_one(self, client, group_with_members):
+        g = group_with_members
+        _upload_mapped(client, g["group"]["id"], g["alice_headers"], **CHASE_MAPPING)
+        _upload_mapped(
+            client,
+            g["group"]["id"],
+            g["alice_headers"],
+            **{**CHASE_MAPPING, "descriptionColumn": "Category"},
+        )
+        shape = _inspect(client, g["group"]["id"], g["alice_headers"]).json()
+        assert shape["suggested"]["descriptionColumn"] == "Category"

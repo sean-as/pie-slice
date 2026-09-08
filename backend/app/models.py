@@ -180,6 +180,41 @@ class Settlement(ApiModel):
 # ---------------------------------------------------------------------------
 
 
+DateFormat = Literal["iso", "mdy", "dmy"]
+AmountSign = Literal["positive_is_charge", "negative_is_charge"]
+
+
+class ColumnMapping(ApiModel):
+    """
+    How to read one bank's export: which column is which, which sign means
+    a charge, and what date format the date column uses. Column values are
+    header names as they appear in the file.
+    """
+
+    date_column: str = Field(min_length=1, alias="dateColumn")
+    description_column: str = Field(min_length=1, alias="descriptionColumn")
+    amount_column: str = Field(min_length=1, alias="amountColumn")
+    date_format: DateFormat = Field(default="iso", alias="dateFormat")
+    amount_sign: AmountSign = Field(default="positive_is_charge", alias="amountSign")
+
+
+class FileShape(ApiModel):
+    """
+    What a file looks like before any transaction is read from it — enough
+    for the user to confirm or correct how it should be read. Nothing is
+    parsed into transactions and nothing is stored at this point.
+    """
+
+    columns: list[str]
+    #: A few raw data rows, keyed by column name, to check the mapping against.
+    sample_rows: list[dict[str, str]] = Field(alias="sampleRows")
+    suggested: ColumnMapping
+    #: Roles ("date"/"description"/"amount") the guess couldn't fill in.
+    unresolved: list[str]
+    #: True when MM/DD vs DD/MM can't be told apart from this file's data.
+    date_format_ambiguous: bool = Field(alias="dateFormatAmbiguous")
+
+
 class ReviewRow(ApiModel):
     """
     One transaction awaiting the user's yes/no. `preselected` is a UI
