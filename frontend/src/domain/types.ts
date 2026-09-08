@@ -70,3 +70,34 @@ export type BalancesResult = {
   balances: MemberBalance[];
   settleUp: SettleUpTransfer[];
 };
+
+/**
+ * One parsed CSV transaction awaiting the user's yes/no. Nothing exists in
+ * the group for it yet — `confirmImport` is what creates expenses.
+ */
+export type ReviewRow = {
+  id: string;
+  date: string;
+  description: string;
+  amountCents: number;
+  /**
+   * True when this user has imported this merchant into this group before,
+   * so the UI ticks it by default. A default, not a decision — the user can
+   * untick it, and ticking a new merchant is equally allowed.
+   */
+  preselected: boolean;
+};
+
+/** A CSV row that couldn't be parsed. Reported to the user, never fatal. */
+export type SkippedRow = {
+  line: number;
+  reason: string;
+};
+
+export type ImportPreview = {
+  importId: string;
+  rows: ReviewRow[];
+  skipped: SkippedRow[];
+  /** Rows left out because this user already imported them into this group. */
+  duplicateCount: number;
+};

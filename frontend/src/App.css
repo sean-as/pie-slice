@@ -188,3 +188,67 @@ ul.list {
   word-break: break-all;
   font-size: 0.85rem;
 }
+
+.import-panel {
+  margin-top: 2rem;
+}
+
+.import-panel input[type="file"] {
+  max-width: 100%;
+}
+
+/* Checkbox and text share a row; the text wraps rather than overflowing. */
+.import-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-weight: 400;
+  font-size: 0.95rem;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.import-row input[type="checkbox"] {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.import-panel .actions {
+  margin-top: 1rem;
+}
+
+.warning {
+  color: #92400e;
+  font-size: 0.85rem;
+}
+
+/*
+ * Phone layout. The row-based pieces (.card, .inline-form, .actions) are
+ * built for a wide viewport and overflow below ~480px, so they stack.
+ */
+@media (max-width: 480px) {
+  .content {
+    padding: 1rem;
+  }
+
+  .card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .inline-form {
+    flex-direction: column;
+  }
+
+  .actions button,
+  .inline-form button {
+    width: 100%;
+  }
+
+  .split-row {
+    flex-wrap: wrap;
+  }
+}

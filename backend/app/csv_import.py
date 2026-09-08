@@ -90,6 +90,14 @@ def fingerprint(
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
+def _parse_date(raw: str) -> date_type:
+    """Wraps fromisoformat so the user sees our wording, not Python's."""
+    try:
+        return date_type.fromisoformat(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"could not read date {raw.strip()!r} — expected YYYY-MM-DD") from exc
+
+
 def _parse_amount_cents(raw: str) -> int:
     """
     Decimal, never float — binary floats can't represent most cent values
@@ -154,7 +162,7 @@ def parse_csv(content: bytes) -> ParseResult:
             if max(date_at, description_at, amount_at) >= len(record):
                 raise ValueError("row has fewer columns than the header")
 
-            row_date = date_type.fromisoformat(record[date_at].strip())
+            row_date = _parse_date(record[date_at])
             description = defuse_formula(record[description_at])
             if not description:
                 raise ValueError("missing description")

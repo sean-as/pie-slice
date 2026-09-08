@@ -2,6 +2,7 @@ import type {
   BalancesResult,
   Expense,
   Group,
+  ImportPreview,
   Settlement,
   SplitMethod,
   User,
@@ -96,4 +97,19 @@ export interface ExpenseServiceApi {
   deleteSettlement(groupId: string, settlementId: string): Promise<void>;
 
   getBalances(groupId: string): Promise<BalancesResult>;
+
+  /**
+   * Parses a CSV of the current user's card transactions and returns every
+   * row for review. **Creates nothing** — `confirmImport` does that.
+   * Transactions from merchants this user has imported into this group
+   * before come back `preselected`; already-imported ones are left out
+   * entirely and only counted in `duplicateCount`.
+   */
+  uploadCsv(groupId: string, file: File): Promise<ImportPreview>;
+  /**
+   * Turns exactly the given review rows into expenses (empty list = import
+   * nothing) and remembers their merchants for this user in this group.
+   * Consumes the import — confirming the same one twice throws.
+   */
+  confirmImport(groupId: string, importId: string, rowIds: string[]): Promise<Expense[]>;
 }

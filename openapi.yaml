@@ -44,6 +44,10 @@ tags:
     description: Record, edit, and delete payments made to settle a debt.
   - name: balances
     description: Read-only computed balances and settle-up suggestions.
+  - name: imports
+    description: >
+      Turn a CSV of the caller's own card transactions into expenses:
+      upload for review, then confirm the selected rows.
 
 paths:
   /auth/signup:
@@ -519,6 +523,141 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /groups/{groupId}/imports:
+    post:
+      tags: [imports]
+      operationId: uploadCsv
+      summary: Upload a CSV of transactions for review
+      description: >
+        Maps to `ExpenseServiceApi.uploadCsv`. **Creates nothing** — it
+        parses the file, stages the rows server-side, and returns them all
+        for review; `POST .../confirm` is what turns the chosen ones into
+        expenses.
+
+
+        Each returned row carries `preselected: true` when the caller has
+        imported that merchant into this group before (matching is on the
+        case-folded, whitespace-collapsed `description`). That is a UI
+        default only — the confirm call's explicit id list is authoritative,
+        so the user may untick a pre-selected row or tick a brand-new one.
+
+
+        Rows with a zero or negative amount (payments, credits, refunds) are
+        dropped silently and never appear. Rows the caller has already
+        imported into this group are also dropped, counted only in
+        `duplicateCount`, so re-uploading the same or an overlapping
+        statement can never double-import. Rows that fail to parse do not
+        fail the file — they come back in `skipped` with a line number.
+
+
+        The uploaded file itself is never stored (product-spec.md
+        non-goals).
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: >
+                    CSV with a header row and `date` (ISO `YYYY-MM-DD`),
+                    `description`, and `amount` (plain decimal dollars)
+                    columns. Header names are matched case-insensitively and
+                    column order is not assumed. Max 1 MB / 2000 rows.
+      responses:
+        "200":
+          description: Parsed transactions awaiting review. Nothing has been created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPreview"
+        "400":
+          description: The file is unreadable, empty, or missing a required column.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The file exceeds the upload size limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /groups/{groupId}/imports/{importId}/confirm:
+    post:
+      tags: [imports]
+      operationId: confirmImport
+      summary: Import the reviewed transactions the user selected
+      description: >
+        Maps to `ExpenseServiceApi.confirmImport`. Creates one expense per
+        id in `rowIds` — the rows the user left selected. An empty list is
+        valid and imports nothing; unlisted rows are dropped.
+
+
+        The request carries **only** ids: description, amount, date and the
+        dedupe fingerprint all come from the staged rows, so a client can
+        never restate them (product-spec.md technical constraints). Each
+        imported expense has the uploader as both payer and creator, an
+        equal split across all current group members, and is thereafter
+        indistinguishable from a manually logged one (creator-only
+        edit/delete, counted in balances).
+
+
+        Importing a row remembers its merchant for this (user, group), so it
+        is pre-selected on the caller's next upload — there is no separate
+        "always include" action. Leaving a row unselected imports nothing
+        and does **not** forget an already-remembered merchant.
+
+
+        The pending import is consumed: confirming the same `importId` twice
+        returns 404 rather than importing again.
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+        - $ref: "#/components/parameters/ImportId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmImportInput"
+      responses:
+        "200":
+          description: The expenses created from the selected rows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          description: A row id is not part of this import.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >
+            No such pending import for this caller and group — it was
+            already confirmed, or belongs to someone else. Also covers the
+            group not existing / not being yours.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -543,6 +682,13 @@ components:
         format: uuid
     SettlementId:
       name: settlementId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ImportId:
+      name: importId
       in: path
       required: true
       schema:
@@ -970,3 +1116,89 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SettleUpTransfer"
+
+    ReviewRow:
+      type: object
+      description: >
+        One parsed transaction awaiting the user's yes/no. Nothing has been
+        created for it yet.
+      required: [id, date, description, amountCents, preselected]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >
+            Identifies this staged row for the confirm call. Valid only
+            within its own import, and only for the user who uploaded it.
+        date:
+          type: string
+          format: date
+        description:
+          type: string
+          description: >
+            The transaction's merchant text. A leading `=`, `+`, `-` or `@`
+            has been defused with a `'` prefix so it can never be evaluated
+            as a formula downstream.
+        amountCents:
+          type: integer
+          exclusiveMinimum: 0
+        preselected:
+          type: boolean
+          description: >
+            True when this merchant was imported into this group by this
+            user before, so the UI should tick it by default. A hint only —
+            the confirm call's id list decides what is actually imported.
+
+    SkippedRow:
+      type: object
+      description: A row that could not be parsed. Reported, never fatal.
+      required: [line, reason]
+      properties:
+        line:
+          type: integer
+          description: 1-based line number in the uploaded file (the header is line 1).
+        reason:
+          type: string
+
+    ImportPreview:
+      type: object
+      required: [importId, rows, skipped, duplicateCount]
+      properties:
+        importId:
+          type: string
+          format: uuid
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewRow"
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkippedRow"
+        duplicateCount:
+          type: integer
+          description: >
+            How many rows were left out because this user already imported
+            them into this group. They are never shown for review.
+
+    ConfirmImportInput:
+      type: object
+      required: [rowIds]
+      properties:
+        rowIds:
+          type: array
+          description: >
+            The `ReviewRow.id`s the user left selected. May be empty (import
+            nothing). Any id not belonging to this import is a 400.
+          items:
+            type: string
+            format: uuid
+
+    ImportResult:
+      type: object
+      required: [imported]
+      properties:
+        imported:
+          type: array
+          items:
+            $ref: "#/components/schemas/Expense"

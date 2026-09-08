@@ -1,5 +1,14 @@
-import type { Expense, Group, Member, Settlement, User } from "../domain/types";
+import type {
+  Expense,
+  Group,
+  ImportPreview,
+  Member,
+  ReviewRow,
+  Settlement,
+  User,
+} from "../domain/types";
 import { computeBalances } from "../domain/balances";
+import { fingerprint, normalizeMerchant, parseCsv } from "../domain/csvImport";
 import { splitEqual, splitExact, splitPercent, splitShares } from "../domain/splitting";
 import type {
   AddExpenseInput,
@@ -18,22 +27,41 @@ const SIMULATED_LATENCY_MS = 150;
 
 type StoredUser = User & { passwordHash: string };
 
+/** A CSV row staged by uploadCsv, awaiting confirmImport. */
+type PendingItem = ReviewRow & { fingerprint: string };
+
 type Db = {
   users: Record<string, StoredUser>;
   groups: Record<string, Group>;
   expenses: Record<string, Expense[]>;
   settlements: Record<string, Settlement[]>;
+  /** Normalized merchants this user has imported, keyed `userId:groupId`. */
+  rememberedMerchants: Record<string, string[]>;
+  /** Fingerprints of transactions already imported, keyed `userId:groupId`. */
+  importedFingerprints: Record<string, string[]>;
+  /** Staged uploads awaiting confirmation, keyed by importId. */
+  pendingImports: Record<string, { groupId: string; userId: string; items: PendingItem[] }>;
 };
 
 function emptyDb(): Db {
-  return { users: {}, groups: {}, expenses: {}, settlements: {} };
+  return {
+    users: {},
+    groups: {},
+    expenses: {},
+    settlements: {},
+    rememberedMerchants: {},
+    importedFingerprints: {},
+    pendingImports: {},
+  };
 }
 
 function loadDb(): Db {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return emptyDb();
   try {
-    return JSON.parse(raw) as Db;
+    // Spread over the empty shape so a database saved before the import
+    // tables existed still loads instead of yielding undefined lookups.
+    return { ...emptyDb(), ...(JSON.parse(raw) as Db) };
   } catch {
     return emptyDb();
   }
@@ -77,6 +105,11 @@ function getSessionUserId(): string | null {
 function setSessionUserId(userId: string | null): void {
   if (userId) localStorage.setItem(SESSION_KEY, userId);
   else localStorage.removeItem(SESSION_KEY);
+}
+
+/** Remembered merchants and dedupe are both scoped to one user in one group. */
+function importScope(userId: string, groupId: string): string {
+  return `${userId}:${groupId}`;
 }
 
 function requireSessionUserId(): string {
@@ -365,5 +398,106 @@ export class MockExpenseService implements ExpenseServiceApi {
     const group = requireMembership(db.groups[groupId], userId);
     const memberIds = group.members.map((m) => m.id);
     return delay(computeBalances(memberIds, db.expenses[groupId] ?? [], db.settlements[groupId] ?? []));
+  }
+
+  async uploadCsv(groupId: string, file: File): Promise<ImportPreview> {
+    const db = loadDb();
+    const userId = requireSessionUserId();
+    requireMembership(db.groups[groupId], userId);
+
+    const parsed = parseCsv(await file.text());
+    const scope = importScope(userId, groupId);
+    const alreadyImported = new Set(db.importedFingerprints[scope] ?? []);
+    const remembered = new Set(db.rememberedMerchants[scope] ?? []);
+
+    const items: PendingItem[] = [];
+    const seenInFile = new Set<string>();
+    let duplicateCount = 0;
+
+    for (const row of parsed.rows) {
+      const rowFingerprint = fingerprint(groupId, userId, row.date, row.description, row.amountCents);
+      // Already imported, or an identical row earlier in this same file.
+      if (alreadyImported.has(rowFingerprint) || seenInFile.has(rowFingerprint)) {
+        duplicateCount++;
+        continue;
+      }
+      seenInFile.add(rowFingerprint);
+
+      items.push({
+        id: id(),
+        date: row.date,
+        description: row.description,
+        amountCents: row.amountCents,
+        preselected: remembered.has(normalizeMerchant(row.description)),
+        fingerprint: rowFingerprint,
+      });
+    }
+
+    const importId = id();
+    db.pendingImports[importId] = { groupId, userId, items };
+    saveDb(db);
+
+    return delay({
+      importId,
+      // Without the fingerprint: it's derived, never handed to the client.
+      rows: items.map(({ fingerprint: _fingerprint, ...row }) => row),
+      skipped: parsed.skipped,
+      duplicateCount,
+    });
+  }
+
+  async confirmImport(groupId: string, importId: string, rowIds: string[]): Promise<Expense[]> {
+    const db = loadDb();
+    const userId = requireSessionUserId();
+    const group = requireMembership(db.groups[groupId], userId);
+
+    const pending = db.pendingImports[importId];
+    if (!pending || pending.groupId !== groupId || pending.userId !== userId) {
+      throw new Error("That import has expired or was already submitted.");
+    }
+    const knownIds = new Set(pending.items.map((item) => item.id));
+    if (rowIds.some((rowId) => !knownIds.has(rowId))) {
+      throw new Error("That transaction isn't part of this import.");
+    }
+
+    const payerId = group.members.find((m) => m.userId === userId)!.id;
+    const memberIds = group.members.map((m) => m.id);
+    const scope = importScope(userId, groupId);
+    const selected = new Set(rowIds);
+
+    // Iterating the staged rows deduplicates the id list for free.
+    const imported: Expense[] = pending.items
+      .filter((item) => selected.has(item.id))
+      .map((item) => ({
+        id: id(),
+        groupId,
+        description: item.description,
+        amountCents: item.amountCents,
+        payerId,
+        date: item.date,
+        splitMethod: "equal" as const,
+        splits: splitEqual(item.amountCents, memberIds),
+        createdByUserId: userId,
+      }));
+
+    db.expenses[groupId] = [...(db.expenses[groupId] ?? []), ...imported];
+
+    const importedItems = pending.items.filter((item) => selected.has(item.id));
+    db.importedFingerprints[scope] = [
+      ...(db.importedFingerprints[scope] ?? []),
+      ...importedItems.map((item) => item.fingerprint),
+    ];
+    // Importing is what remembers a merchant — there's no separate opt-in,
+    // and leaving a row unticked never forgets one.
+    db.rememberedMerchants[scope] = [
+      ...new Set([
+        ...(db.rememberedMerchants[scope] ?? []),
+        ...importedItems.map((item) => normalizeMerchant(item.description)),
+      ]),
+    ];
+
+    delete db.pendingImports[importId];
+    saveDb(db);
+    return delay(imported);
   }
 }

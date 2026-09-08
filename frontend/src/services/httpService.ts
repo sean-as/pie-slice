@@ -1,4 +1,11 @@
-import type { BalancesResult, Expense, Group, Settlement, User } from "../domain/types";
+import type {
+  BalancesResult,
+  Expense,
+  Group,
+  ImportPreview,
+  Settlement,
+  User,
+} from "../domain/types";
 import type {
   AddExpenseInput,
   AddSettlementInput,
@@ -34,7 +41,10 @@ export class ApiError extends Error {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // A FormData body must set its own Content-Type: the browser adds the
+    // multipart boundary, which we can't know here — forcing JSON would
+    // make the server unable to find the file part.
+    ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers as Record<string, string> | undefined),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -187,5 +197,19 @@ export class HttpExpenseService implements ExpenseServiceApi {
 
   async getBalances(groupId: string): Promise<BalancesResult> {
     return request<BalancesResult>(`/groups/${groupId}/balances`);
+  }
+
+  async uploadCsv(groupId: string, file: File): Promise<ImportPreview> {
+    const body = new FormData();
+    body.append("file", file);
+    return request<ImportPreview>(`/groups/${groupId}/imports`, { method: "POST", body });
+  }
+
+  async confirmImport(groupId: string, importId: string, rowIds: string[]): Promise<Expense[]> {
+    const result = await request<{ imported: Expense[] }>(
+      `/groups/${groupId}/imports/${importId}/confirm`,
+      { method: "POST", body: JSON.stringify({ rowIds }) }
+    );
+    return result.imported;
   }
 }

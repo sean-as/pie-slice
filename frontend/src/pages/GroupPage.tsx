@@ -6,6 +6,7 @@ import { expenseService } from "../services";
 import { ExpenseForm } from "../components/ExpenseForm";
 import { SettlementForm } from "../components/SettlementForm";
 import { BalancesView } from "../components/BalancesView";
+import { CsvImportPanel } from "../components/CsvImportPanel";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 export function GroupPage() {
@@ -19,6 +20,8 @@ export function GroupPage() {
   const [linkedEmail, setLinkedEmail] = useState("");
   const [placeholderName, setPlaceholderName] = useState("");
   const [memberError, setMemberError] = useState<string | null>(null);
+  /** The name we've warned about; submitting it again confirms it. */
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [showSettlementForm, setShowSettlementForm] = useState(false);
@@ -81,9 +84,22 @@ export function GroupPage() {
     setMemberError(null);
     const name = placeholderName.trim();
     if (!name || !groupId) return;
+
+    // Duplicate names are allowed but make "who owes whom" ambiguous, so
+    // warn once and let a second submit through (product-spec.md).
+    const clashes = group!.members.some(
+      (m) => m.displayName.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (clashes && duplicateWarning !== name) {
+      setDuplicateWarning(name);
+      return;
+    }
+    setDuplicateWarning(null);
+
     try {
       await expenseService.addPlaceholderMember(groupId, name);
       setPlaceholderName("");
+      setDuplicateWarning(null);
       await refresh();
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : "Could not add that member.");
@@ -135,6 +151,12 @@ export function GroupPage() {
           Add placeholder
         </button>
       </form>
+      {duplicateWarning && (
+        <p className="warning">
+          Someone in this group is already called “{duplicateWarning}” — that makes “who owes whom”
+          ambiguous. Add it again to confirm.
+        </p>
+      )}
       {memberError && <p className="error">{memberError}</p>}
 
       {balances && <BalancesView balances={balances} members={group.members} />}
@@ -193,6 +215,8 @@ export function GroupPage() {
       ) : (
         <button onClick={() => setShowExpenseForm(true)}>+ Add expense</button>
       )}
+
+      <CsvImportPanel groupId={group.id} onImported={refresh} />
 
       <h2>Settlements</h2>
       <ul className="list">
