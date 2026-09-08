@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { CsvFormatError, defuseFormula, normalizeMerchant, parseCsv } from "./csvImport";
+import type { ColumnMapping } from "./csvImport";
+import {
+  CsvFormatError,
+  defuseFormula,
+  detectDateFormat,
+  detectMapping,
+  normalizeMerchant,
+  parseCsv,
+} from "./csvImport";
 
 const csv = (...lines: string[]) => ["date,description,amount", ...lines].join("\n");
 
@@ -104,5 +112,176 @@ describe("normalizeMerchant", () => {
   it("keeps genuinely different merchants apart", () => {
     // The spec rules out fuzzy matching — these must not collapse.
     expect(normalizeMerchant("AMAZON MKTPLACE")).not.toBe(normalizeMerchant("AMAZON.COM*A1B2C"));
+  });
+});
+
+const CHASE = [
+  "Transaction Date,Post Date,Merchant,Debit,Category",
+  "2026-08-26,2026-08-27,Comcast,79.99,Utilities",
+].join("\n");
+
+const mapping = (overrides: Partial<ColumnMapping> = {}): ColumnMapping => ({
+  dateColumn: "date",
+  descriptionColumn: "description",
+  amountColumn: "amount",
+  dateFormat: "iso",
+  amountSign: "positive_is_charge",
+  ...overrides,
+});
+
+describe("column mapping", () => {
+  it("reads arbitrary column names", () => {
+    const result = parseCsv(
+      CHASE,
+      mapping({ dateColumn: "Transaction Date", descriptionColumn: "Merchant", amountColumn: "Debit" })
+    );
+    expect(result.rows).toEqual([{ date: "2026-08-26", description: "Comcast", amountCents: 7999 }]);
+  });
+
+  it("uses the mapped date column, not another date-looking one", () => {
+    const result = parseCsv(
+      CHASE,
+      mapping({ dateColumn: "Post Date", descriptionColumn: "Merchant", amountColumn: "Debit" })
+    );
+    expect(result.rows[0].date).toBe("2026-08-27");
+  });
+
+  it("matches column names case-insensitively", () => {
+    const result = parseCsv(
+      CHASE,
+      mapping({ dateColumn: "transaction date", descriptionColumn: "MERCHANT", amountColumn: "debit" })
+    );
+    expect(result.rows).toHaveLength(1);
+  });
+
+  it("rejects a column the file doesn't have", () => {
+    expect(() =>
+      parseCsv(CHASE, mapping({ dateColumn: "Nope", descriptionColumn: "Merchant", amountColumn: "Debit" }))
+    ).toThrow(CsvFormatError);
+  });
+});
+
+describe("amount sign", () => {
+  const negativeBank = csv("2026-08-26,Comcast,-79.99", "2026-08-27,Payment,500.00");
+
+  it("treats negatives as charges when told to", () => {
+    const result = parseCsv(negativeBank, mapping({ amountSign: "negative_is_charge" }));
+    expect(result.rows.map((r) => [r.description, r.amountCents])).toEqual([["Comcast", 7999]]);
+  });
+
+  it("finds the other side of the ledger under the wrong convention", () => {
+    const result = parseCsv(negativeBank, mapping({ amountSign: "positive_is_charge" }));
+    expect(result.rows.map((r) => r.description)).toEqual(["Payment"]);
+  });
+});
+
+describe("date formats", () => {
+  it("reads US order", () => {
+    const result = parseCsv(csv("09/01/2026,Comcast,79.99"), mapping({ dateFormat: "mdy" }));
+    expect(result.rows[0].date).toBe("2026-09-01");
+  });
+
+  it("reads the same string differently in EU order", () => {
+    const result = parseCsv(csv("09/01/2026,Comcast,79.99"), mapping({ dateFormat: "dmy" }));
+    expect(result.rows[0].date).toBe("2026-01-09");
+  });
+
+  it("skips rather than guessing when the format doesn't match", () => {
+    const result = parseCsv(csv("09/01/2026,Comcast,79.99"), mapping({ dateFormat: "iso" }));
+    expect(result.rows).toEqual([]);
+    expect(result.skipped[0].reason).toContain("YYYY-MM-DD");
+  });
+
+  it("rejects an impossible date under the chosen format", () => {
+    const result = parseCsv(csv("25/01/2026,Comcast,79.99"), mapping({ dateFormat: "mdy" }));
+    expect(result.rows).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+  });
+
+  it("rejects a rolled-over day like Feb 31", () => {
+    const result = parseCsv(csv("02/31/2026,Comcast,79.99"), mapping({ dateFormat: "mdy" }));
+    expect(result.rows).toEqual([]);
+  });
+});
+
+describe("detectMapping", () => {
+  it("recognizes conventional headers", () => {
+    const shape = detectMapping(csv("2026-08-26,Comcast,79.99"));
+    expect(shape.unresolved).toEqual([]);
+    expect(shape.suggested.dateColumn).toBe("date");
+    expect(shape.dateFormatAmbiguous).toBe(false);
+  });
+
+  it("reports columns it can't guess", () => {
+    const shape = detectMapping(CHASE);
+    expect(shape.unresolved.sort()).toEqual(["amount", "date", "description"]);
+    expect(shape.columns).toContain("Merchant");
+  });
+
+  it("returns sample rows keyed by column", () => {
+    const shape = detectMapping(csv("2026-08-26,Comcast,79.99"));
+    expect(shape.sampleRows[0]).toEqual({ date: "2026-08-26", description: "Comcast", amount: "79.99" });
+  });
+
+  it("infers US dates when a day exceeds twelve", () => {
+    const shape = detectMapping(csv("09/25/2026,Comcast,79.99"));
+    expect(shape.suggested.dateFormat).toBe("mdy");
+    expect(shape.dateFormatAmbiguous).toBe(false);
+  });
+
+  it("infers EU dates when the first part exceeds twelve", () => {
+    const shape = detectMapping(csv("25/09/2026,Comcast,79.99"));
+    expect(shape.suggested.dateFormat).toBe("dmy");
+  });
+
+  it("flags genuinely ambiguous slash dates instead of picking", () => {
+    const shape = detectMapping(csv("09/01/2026,Comcast,79.99"));
+    expect(shape.dateFormatAmbiguous).toBe(true);
+  });
+
+  it("prefers a previous mapping whose columns still exist", () => {
+    const previous = mapping({
+      dateColumn: "Transaction Date",
+      descriptionColumn: "Merchant",
+      amountColumn: "Debit",
+      amountSign: "negative_is_charge",
+    });
+    const shape = detectMapping(CHASE, previous);
+    expect(shape.unresolved).toEqual([]);
+    expect(shape.suggested.amountSign).toBe("negative_is_charge");
+  });
+
+  it("ignores a previous mapping whose columns are gone", () => {
+    const previous = mapping({ dateColumn: "Gone", descriptionColumn: "Gone", amountColumn: "Gone" });
+    const shape = detectMapping(csv("2026-08-26,Comcast,79.99"), previous);
+    expect(shape.unresolved).toEqual([]);
+    expect(shape.suggested.dateColumn).toBe("date");
+  });
+});
+
+describe("line numbers", () => {
+  it("points at the real line despite blank lines", () => {
+    const result = parseCsv(csv("2026-08-26,Comcast,79.99", "", "bad,Shell,40.00"));
+    expect(result.skipped.map((s) => s.line)).toEqual([4]);
+  });
+});
+
+describe("detectDateFormat", () => {
+  it("recognizes ISO", () => {
+    expect(detectDateFormat(["2026-08-26", "2026-08-27"])).toBe("iso");
+  });
+
+  it("resolves slash order from a day over twelve", () => {
+    expect(detectDateFormat(["09/25/2026"])).toBe("mdy");
+    expect(detectDateFormat(["25/09/2026"])).toBe("dmy");
+  });
+
+  it("returns null when slash order is a coin flip", () => {
+    expect(detectDateFormat(["09/01/2026", "10/02/2026"])).toBeNull();
+  });
+
+  it("returns null for unrecognizable or empty values", () => {
+    expect(detectDateFormat(["Comcast"])).toBeNull();
+    expect(detectDateFormat([])).toBeNull();
   });
 });

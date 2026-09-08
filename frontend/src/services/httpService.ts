@@ -1,6 +1,8 @@
 import type {
   BalancesResult,
+  ColumnMapping,
   Expense,
+  FileShape,
   Group,
   ImportPreview,
   Settlement,
@@ -199,9 +201,24 @@ export class HttpExpenseService implements ExpenseServiceApi {
     return request<BalancesResult>(`/groups/${groupId}/balances`);
   }
 
-  async uploadCsv(groupId: string, file: File): Promise<ImportPreview> {
+  async inspectCsv(groupId: string, file: File): Promise<FileShape> {
     const body = new FormData();
     body.append("file", file);
+    return request<FileShape>(`/groups/${groupId}/imports/inspect`, { method: "POST", body });
+  }
+
+  async uploadCsv(groupId: string, file: File, mapping?: ColumnMapping): Promise<ImportPreview> {
+    const body = new FormData();
+    body.append("file", file);
+    if (mapping) {
+      // The three column names travel together — the server rejects a
+      // partial mapping rather than half-guessing.
+      body.append("dateColumn", mapping.dateColumn);
+      body.append("descriptionColumn", mapping.descriptionColumn);
+      body.append("amountColumn", mapping.amountColumn);
+      body.append("dateFormat", mapping.dateFormat);
+      body.append("amountSign", mapping.amountSign);
+    }
     return request<ImportPreview>(`/groups/${groupId}/imports`, { method: "POST", body });
   }
 

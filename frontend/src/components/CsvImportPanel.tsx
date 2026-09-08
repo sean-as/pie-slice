@@ -1,16 +1,21 @@
 import { useRef, useState } from "react";
-import type { ImportPreview } from "../domain/types";
+import type { ColumnMapping, FileShape, ImportPreview } from "../domain/types";
 import { formatCents } from "../domain/money";
 import { expenseService } from "../services";
+import { CsvMappingForm } from "./CsvMappingForm";
 
 /**
- * Two-step CSV import. Uploading only stages the file — the review list
- * below is where transactions actually get chosen, with merchants imported
- * before already ticked. A recurring monthly statement should be upload,
- * glance, submit.
+ * Three-step CSV import: confirm how to read the file (banks disagree on
+ * column names, amount signs and date order), then review the transactions
+ * it holds, then submit. Nothing is created before that last step.
+ *
+ * The file is held in component state across the first two steps because
+ * the server stores no statements — inspecting and uploading each send it.
  */
 export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImported: () => Promise<void> }) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [shape, setShape] = useState<FileShape | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -18,25 +23,42 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
   const [done, setDone] = useState<string | null>(null);
 
   function reset() {
+    setFile(null);
+    setShape(null);
     setPreview(null);
     setSelected(new Set());
     if (fileInput.current) fileInput.current.value = "";
   }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const chosen = e.target.files?.[0];
+    if (!chosen) return;
 
     setError(null);
     setDone(null);
     setBusy(true);
     try {
-      const result = await expenseService.uploadCsv(groupId, file);
+      setShape(await expenseService.inspectCsv(groupId, chosen));
+      setFile(chosen);
+    } catch (err) {
+      reset();
+      setError(err instanceof Error ? err.message : "Could not read that file.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMapping(mapping: ColumnMapping) {
+    if (!file) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await expenseService.uploadCsv(groupId, file, mapping);
+      setShape(null);
       setPreview(result);
       // Merchants seen before start ticked; everything else starts off.
       setSelected(new Set(result.rows.filter((r) => r.preselected).map((r) => r.id)));
     } catch (err) {
-      reset();
       setError(err instanceof Error ? err.message : "Could not read that file.");
     } finally {
       setBusy(false);
@@ -83,11 +105,11 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
     <section className="import-panel">
       <h2>Import from CSV</h2>
 
-      {!preview && (
+      {!preview && !shape && (
         <>
           <p className="meta">
-            A statement with <code>date</code>, <code>description</code> and <code>amount</code> columns.
-            You'll review everything before anything is added.
+            A statement export with a header row and columns for date, description and amount. You'll
+            confirm how to read it and review every transaction before anything is added.
           </p>
           <input ref={fileInput} type="file" accept=".csv,text/csv" onChange={handleFile} disabled={busy} />
         </>
@@ -95,6 +117,10 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
 
       {error && <p className="error">{error}</p>}
       {done && <p className="meta">{done}</p>}
+
+      {shape && (
+        <CsvMappingForm shape={shape} onSubmit={handleMapping} onCancel={reset} busy={busy} />
+      )}
 
       {preview && (
         <>

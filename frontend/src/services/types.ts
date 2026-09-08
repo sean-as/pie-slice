@@ -1,6 +1,8 @@
 import type {
   BalancesResult,
+  ColumnMapping,
   Expense,
+  FileShape,
   Group,
   ImportPreview,
   Settlement,
@@ -99,13 +101,22 @@ export interface ExpenseServiceApi {
   getBalances(groupId: string): Promise<BalancesResult>;
 
   /**
-   * Parses a CSV of the current user's card transactions and returns every
-   * row for review. **Creates nothing** — `confirmImport` does that.
-   * Transactions from merchants this user has imported into this group
-   * before come back `preselected`; already-imported ones are left out
-   * entirely and only counted in `duplicateCount`.
+   * Reads a CSV's shape — its columns, a few sample rows, and a suggested
+   * mapping — without interpreting a single transaction. **Creates
+   * nothing and stores nothing.** The suggestion is seeded from whatever
+   * mapping this user last used for this group, so a returning user
+   * usually just confirms it.
    */
-  uploadCsv(groupId: string, file: File): Promise<ImportPreview>;
+  inspectCsv(groupId: string, file: File): Promise<FileShape>;
+  /**
+   * Parses a CSV of the current user's card transactions through `mapping`
+   * and returns every row for review. **Creates nothing** —
+   * `confirmImport` does that. Transactions from merchants this user has
+   * imported into this group before come back `preselected`;
+   * already-imported ones are left out entirely and only counted in
+   * `duplicateCount`. A mapping that parses is remembered for next time.
+   */
+  uploadCsv(groupId: string, file: File, mapping?: ColumnMapping): Promise<ImportPreview>;
   /**
    * Turns exactly the given review rows into expenses (empty list = import
    * nothing) and remembers their merchants for this user in this group.

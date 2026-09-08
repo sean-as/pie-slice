@@ -1,5 +1,7 @@
 import type {
+  ColumnMapping,
   Expense,
+  FileShape,
   Group,
   ImportPreview,
   Member,
@@ -8,7 +10,7 @@ import type {
   User,
 } from "../domain/types";
 import { computeBalances } from "../domain/balances";
-import { fingerprint, normalizeMerchant, parseCsv } from "../domain/csvImport";
+import { detectMapping, fingerprint, normalizeMerchant, parseCsv } from "../domain/csvImport";
 import { splitEqual, splitExact, splitPercent, splitShares } from "../domain/splitting";
 import type {
   AddExpenseInput,
@@ -41,6 +43,8 @@ type Db = {
   importedFingerprints: Record<string, string[]>;
   /** Staged uploads awaiting confirmation, keyed by importId. */
   pendingImports: Record<string, { groupId: string; userId: string; items: PendingItem[] }>;
+  /** Last CSV mapping used, keyed `userId:groupId`. */
+  importMappings: Record<string, ColumnMapping>;
 };
 
 function emptyDb(): Db {
@@ -52,6 +56,7 @@ function emptyDb(): Db {
     rememberedMerchants: {},
     importedFingerprints: {},
     pendingImports: {},
+    importMappings: {},
   };
 }
 
@@ -400,13 +405,27 @@ export class MockExpenseService implements ExpenseServiceApi {
     return delay(computeBalances(memberIds, db.expenses[groupId] ?? [], db.settlements[groupId] ?? []));
   }
 
-  async uploadCsv(groupId: string, file: File): Promise<ImportPreview> {
+  async inspectCsv(groupId: string, file: File): Promise<FileShape> {
     const db = loadDb();
     const userId = requireSessionUserId();
     requireMembership(db.groups[groupId], userId);
 
-    const parsed = parseCsv(await file.text());
+    // Seeded from whatever this user last used here — a bank's format
+    // doesn't change month to month.
+    return delay(detectMapping(await file.text(), db.importMappings[importScope(userId, groupId)]));
+  }
+
+  async uploadCsv(groupId: string, file: File, mapping?: ColumnMapping): Promise<ImportPreview> {
+    const db = loadDb();
+    const userId = requireSessionUserId();
+    requireMembership(db.groups[groupId], userId);
+
+    const parsed = parseCsv(await file.text(), mapping);
     const scope = importScope(userId, groupId);
+
+    // Remembered only once the file actually parsed under it, so a mapping
+    // naming a nonexistent column never becomes next month's default.
+    if (mapping) db.importMappings[scope] = mapping;
     const alreadyImported = new Set(db.importedFingerprints[scope] ?? []);
     const remembered = new Set(db.rememberedMerchants[scope] ?? []);
 

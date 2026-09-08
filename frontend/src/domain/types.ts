@@ -101,3 +101,34 @@ export type ImportPreview = {
   /** Rows left out because this user already imported them into this group. */
   duplicateCount: number;
 };
+
+export type DateFormat = "iso" | "mdy" | "dmy";
+export type AmountSign = "positive_is_charge" | "negative_is_charge";
+
+/**
+ * How to read one bank's CSV export. Banks disagree on column names, on
+ * which sign means a charge, and on date order, so all three are the
+ * user's to set — with whatever the app can safely detect pre-filled.
+ */
+export type ColumnMapping = {
+  dateColumn: string;
+  descriptionColumn: string;
+  amountColumn: string;
+  dateFormat: DateFormat;
+  amountSign: AmountSign;
+};
+
+/**
+ * What a file looks like before any transaction is read from it. Nothing
+ * has been parsed into transactions and nothing is stored at this point.
+ */
+export type FileShape = {
+  columns: string[];
+  /** A few raw data rows, keyed by column name, to check the mapping against. */
+  sampleRows: Record<string, string>[];
+  suggested: ColumnMapping;
+  /** Roles ("date"/"description"/"amount") the app couldn't work out. */
+  unresolved: string[];
+  /** True when MM/DD and DD/MM can't be told apart from this file's data. */
+  dateFormatAmbiguous: boolean;
+};
