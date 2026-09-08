@@ -24,7 +24,8 @@ function preview(shape: FileShape, mapping: ColumnMapping): string | null {
   try {
     const { rows, skipped } = parseCsv(`${header}\n${row}`, mapping);
     if (rows.length > 0) {
-      return `${rows[0].description} — ${formatCents(rows[0].amountCents)} on ${rows[0].date}`;
+      const { description, amountCents, date, category } = rows[0];
+      return `${description} — ${formatCents(amountCents)} on ${date}${category ? ` (${category})` : ""}`;
     }
     if (skipped.length > 0) return `This row can't be read: ${skipped[0].reason}`;
     // Parsed fine but wasn't a charge under the chosen sign.
@@ -147,9 +148,51 @@ export function CsvMappingForm({
         </select>
       </div>
 
+      <div className="field">
+        <label htmlFor="map-category">Category column (optional)</label>
+        <select
+          id="map-category"
+          value={mapping.categoryColumn ?? ""}
+          onChange={(e) => set("categoryColumn", e.target.value || null)}
+        >
+          <option value="">None — my file has no category</option>
+          {shape.columns.map((column) => (
+            <option key={column} value={column}>
+              {column}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {shape.sampleRows.length > 0 && (
+        <>
+          <p className="meta">The first rows of your file, exactly as they appear in it:</p>
+          <div className="sample-scroll">
+            <table className="sample-table">
+              <thead>
+                <tr>
+                  {shape.columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {shape.sampleRows.map((row, i) => (
+                  <tr key={i}>
+                    {shape.columns.map((column) => (
+                      <td key={column}>{row[column]}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
       {sampleReading && (
         <p className="meta">
-          First row reads as: <strong>{sampleReading}</strong>
+          With these settings, that first row reads as: <strong>{sampleReading}</strong>
         </p>
       )}
 

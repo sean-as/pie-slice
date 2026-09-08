@@ -184,7 +184,8 @@ export function GroupPage() {
                 {exp.description} — {formatCents(exp.amountCents)}
                 <br />
                 <span className="meta">
-                  paid by {nameById.get(exp.payerId) ?? "Unknown"} on {exp.date} · logged by{" "}
+                  paid by {nameById.get(exp.payerId) ?? "Unknown"} on {exp.date}
+                  {exp.category && ` · ${exp.category}`} · logged by{" "}
                   {exp.createdByUserId === user.id ? "you" : "someone else"}
                 </span>
               </span>

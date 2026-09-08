@@ -17,6 +17,18 @@ export const DEFAULT_COLUMN_NAMES = {
   amount: "amount",
 } as const;
 
+/** Recognized like the rest, but never required — see ColumnMapping.categoryColumn. */
+export const DEFAULT_CATEGORY_COLUMN = "category";
+
+/**
+ * Sanity ceiling on one transaction. Past this it's a misread column or a
+ * junk row, not a real card charge.
+ */
+export const MAX_AMOUNT_DOLLARS = 1_000_000_000;
+
+/** Delimiters seen in real exports, most likely first. */
+const CANDIDATE_DELIMITERS = [",", ";", "\t", "|"] as const;
+
 /** How many data rows to show so the user can check their mapping. */
 export const SAMPLE_ROWS = 3;
 
@@ -41,6 +53,8 @@ export type ColumnMapping = {
   amountColumn: string;
   dateFormat: DateFormat;
   amountSign: AmountSign;
+  /** Optional: null means this file has no category column. */
+  categoryColumn?: string | null;
 };
 
 /**
@@ -61,6 +75,7 @@ export type ParsedRow = {
   date: string;
   description: string;
   amountCents: number;
+  category?: string | null;
 };
 
 export type ParsedSkip = {
@@ -108,7 +123,7 @@ export function fingerprint(
  * Minimal RFC-4180 splitter: handles quoted fields and doubled quotes,
  * which is all a bank export needs (amounts like "1,200.00" are quoted).
  */
-function splitCsvLine(line: string): string[] {
+function splitCsvLine(line: string, delimiter: string = ","): string[] {
   const cells: string[] = [];
   let cell = "";
   let inQuotes = false;
@@ -128,7 +143,7 @@ function splitCsvLine(line: string): string[] {
       }
     } else if (char === '"') {
       inQuotes = true;
-    } else if (char === ",") {
+    } else if (char === delimiter) {
       cells.push(cell);
       cell = "";
     } else {
@@ -144,14 +159,24 @@ function splitCsvLine(line: string): string[] {
  * split and padded, so 1234.56 can never become 123455.99999.
  */
 function parseAmountCents(raw: string): number {
-  const cleaned = raw.trim().replace(/[$,]/g, "");
+  let cleaned = raw.trim().replace(/[$,\s]/g, "");
+
+  // Accounting notation for a negative: (79.99) means -79.99.
+  if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+    cleaned = `-${cleaned.slice(1, -1)}`;
+  }
   if (!cleaned) throw new Error("missing amount");
 
+  // Digits-and-one-dot only, deliberately: this rejects "Infinity", "NaN"
+  // and "1e400" up front rather than letting them through as numbers.
   const match = /^(-?)(\d*)(?:\.(\d+))?$/.exec(cleaned);
   if (!match || (!match[2] && !match[3])) throw new Error(`could not read amount '${raw.trim()}'`);
 
   const [, sign, whole, fraction = ""] = match;
   if (fraction.length > 2) throw new Error(`amount '${raw.trim()}' is more precise than whole cents`);
+  if (Number(whole || "0") > MAX_AMOUNT_DOLLARS) {
+    throw new Error(`amount '${raw.trim()}' is implausibly large`);
+  }
 
   const cents = Number(whole || "0") * 100 + Number(fraction.padEnd(2, "0") || "0");
   return sign === "-" ? -cents : cents;
@@ -209,6 +234,18 @@ function parseDate(raw: string, dateFormat: DateFormat): string {
 type Record_ = { line: number; cells: string[] };
 
 /**
+ * Picks the delimiter that splits the header into the most fields. Simpler
+ * and more predictable than sniffing the whole file, which commas inside
+ * descriptions can throw off.
+ */
+function sniffDelimiter(headerLine: string): string {
+  const best = CANDIDATE_DELIMITERS.reduce((a, b) =>
+    splitCsvLine(headerLine, b).length > splitCsvLine(headerLine, a).length ? b : a
+  );
+  return splitCsvLine(headerLine, best).length > 1 ? best : ",";
+}
+
+/**
  * Decodes the file into its header and data records, each paired with its
  * real line number — blank lines are dropped but still counted, so a skip
  * report points at the line the user sees.
@@ -223,7 +260,8 @@ function read(text: string): { header: string[]; records: Record_[] } {
     throw new CsvFormatError("That file is empty.");
   }
 
-  const header = splitCsvLine(lines[0]).map((name) => name.trim());
+  const delimiter = sniffDelimiter(lines[0]);
+  const header = splitCsvLine(lines[0], delimiter).map((name) => name.trim());
   if (!header.some(Boolean)) {
     throw new CsvFormatError("That file has no header row naming its columns.");
   }
@@ -231,7 +269,7 @@ function read(text: string): { header: string[]; records: Record_[] } {
   const records: Record_[] = [];
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
-    records.push({ line: i + 1, cells: splitCsvLine(lines[i]) });
+    records.push({ line: i + 1, cells: splitCsvLine(lines[i], delimiter) });
   }
   if (records.length > MAX_ROWS) {
     throw new CsvFormatError(`That file has more than ${MAX_ROWS} rows — please split it up.`);
@@ -304,6 +342,17 @@ export function detectMapping(text: string, previous?: ColumnMapping | null): Fi
     }
   }
 
+  // Category is optional throughout: suggested when the file plainly has
+  // one, but never added to `unresolved` — "this file has no category" is a
+  // perfectly good answer and must not block the user.
+  let categoryColumn: string | null = null;
+  if (previous?.categoryColumn) {
+    categoryColumn = byLower.get(previous.categoryColumn.toLowerCase()) ?? null;
+  }
+  if (!categoryColumn && byLower.has(DEFAULT_CATEGORY_COLUMN)) {
+    categoryColumn = byLower.get(DEFAULT_CATEGORY_COLUMN)!;
+  }
+
   const sampleRows = records.slice(0, SAMPLE_ROWS).map(({ cells }) =>
     Object.fromEntries(header.map((name, i) => [name, cells[i] ?? ""]))
   );
@@ -340,6 +389,7 @@ export function detectMapping(text: string, previous?: ColumnMapping | null): Fi
       amountColumn: suggested.amount,
       dateFormat,
       amountSign: previous?.amountSign ?? "positive_is_charge",
+      categoryColumn,
     },
     unresolved,
     dateFormatAmbiguous,
@@ -361,11 +411,15 @@ export function parseCsv(text: string, mapping?: ColumnMapping | null): ParseRes
     amountColumn: DEFAULT_COLUMN_NAMES.amount,
     dateFormat: "iso",
     amountSign: "positive_is_charge",
+    categoryColumn: null,
   };
 
   const dateAt = columnIndex(header, effective.dateColumn, "date");
   const descriptionAt = columnIndex(header, effective.descriptionColumn, "description");
   const amountAt = columnIndex(header, effective.amountColumn, "amount");
+  const categoryAt = effective.categoryColumn
+    ? columnIndex(header, effective.categoryColumn, "category")
+    : null;
 
   // A charge is whichever sign the user says it is; the other side of the
   // ledger (payments, credits, refunds) is what gets dropped.
@@ -391,7 +445,13 @@ export function parseCsv(text: string, mapping?: ColumnMapping | null): ParseRes
       // not even shown for review.
       if (amountCents <= 0) continue;
 
-      rows.push({ date, description, amountCents });
+      // A blank cell in a mapped category column is simply no category.
+      const category =
+        categoryAt !== null && categoryAt < cells.length
+          ? defuseFormula(cells[categoryAt]) || null
+          : null;
+
+      rows.push({ date, description, amountCents, category });
     } catch (err) {
       skipped.push({ line, reason: err instanceof Error ? err.message : "unreadable row" });
     }

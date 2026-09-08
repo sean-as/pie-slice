@@ -41,6 +41,8 @@ export type Expense = {
   splits: Split[];
   /** Whoever was logged in when this was created — only they may edit/delete it. */
   createdByUserId: string;
+  /** Optional free text: typed by hand or from a mapped CSV column. */
+  category?: string | null;
 };
 
 export type Settlement = {
@@ -80,6 +82,8 @@ export type ReviewRow = {
   date: string;
   description: string;
   amountCents: number;
+  /** From the mapped category column, if any. */
+  category?: string | null;
   /**
    * True when this user has imported this merchant into this group before,
    * so the UI ticks it by default. A default, not a decision — the user can
@@ -116,6 +120,11 @@ export type ColumnMapping = {
   amountColumn: string;
   dateFormat: DateFormat;
   amountSign: AmountSign;
+  /**
+   * Optional in a way the other three are not: null means "this file has no
+   * category column", which never blocks an import.
+   */
+  categoryColumn?: string | null;
 };
 
 /**

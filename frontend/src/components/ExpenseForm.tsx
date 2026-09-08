@@ -19,6 +19,7 @@ export function ExpenseForm({
   onCancel?: () => void;
 }) {
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [category, setCategory] = useState(initial?.category ?? "");
   const [amount, setAmount] = useState(initial ? (initial.amountCents / 100).toFixed(2) : "");
   const [payerId, setPayerId] = useState(initial?.payerId ?? members[0]?.id ?? "");
   const [date, setDate] = useState(initial?.date ?? todayIso());
@@ -108,6 +109,7 @@ export function ExpenseForm({
         date,
         splitMethod,
         splitInput,
+        category: category.trim() || null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the expense.");
@@ -126,6 +128,18 @@ export function ExpenseForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Groceries"
+        />
+      </div>
+
+      <div className="field">
+        <label htmlFor="expense-category">Category (optional)</label>
+        <input
+          id="expense-category"
+          type="text"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          placeholder="Utilities"
+          maxLength={100}
         />
       </div>
 

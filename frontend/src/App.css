@@ -269,3 +269,34 @@ ul.list {
 .mapping-form select {
   width: 100%;
 }
+
+/* Raw sample rows in the mapping form: wide files scroll rather than
+   forcing the page to. */
+.sample-scroll {
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+
+.sample-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.sample-table th,
+.sample-table td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: left;
+}
+
+.sample-table th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.sample-table tr:last-child td {
+  border-bottom: none;
+}

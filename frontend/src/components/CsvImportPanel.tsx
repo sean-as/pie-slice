@@ -165,6 +165,7 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
                         <br />
                         <span className="meta">
                           {row.date}
+                          {row.category && ` · ${row.category}`}
                           {row.preselected && " · imported before"}
                         </span>
                       </span>

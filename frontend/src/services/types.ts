@@ -37,6 +37,8 @@ export type AddExpenseInput = {
     | { method: "exact"; amounts: { memberId: string; amountCents: number }[] }
     | { method: "percent"; percentages: { memberId: string; percent: number }[] }
     | { method: "shares"; shares: { memberId: string; shares: number }[] };
+  /** Optional free text. Blank is stored as no category. */
+  category?: string | null;
 };
 
 export type UpdateExpenseInput = AddExpenseInput;

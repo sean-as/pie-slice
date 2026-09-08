@@ -289,6 +289,7 @@ export class MockExpenseService implements ExpenseServiceApi {
       splitMethod: input.splitMethod,
       splits: resolveSplits(input.amountCents, input.splitInput),
       createdByUserId: userId,
+      category: input.category?.trim() || null,
     };
 
     db.expenses[groupId] = [...(db.expenses[groupId] ?? []), expense];
@@ -316,6 +317,7 @@ export class MockExpenseService implements ExpenseServiceApi {
       date: input.date,
       splitMethod: input.splitMethod,
       splits: resolveSplits(input.amountCents, input.splitInput),
+      category: input.category?.trim() || null,
     };
 
     list[index] = updated;
@@ -497,6 +499,7 @@ export class MockExpenseService implements ExpenseServiceApi {
         splitMethod: "equal" as const,
         splits: splitEqual(item.amountCents, memberIds),
         createdByUserId: userId,
+        category: item.category ?? null,
       }));
 
     db.expenses[groupId] = [...(db.expenses[groupId] ?? []), ...imported];

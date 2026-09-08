@@ -15,12 +15,16 @@ describe("parseCsv", () => {
   it("parses a basic file", () => {
     const result = parseCsv(csv("2026-08-26,Comcast,79.99"));
     expect(result.skipped).toEqual([]);
-    expect(result.rows).toEqual([{ date: "2026-08-26", description: "Comcast", amountCents: 7999 }]);
+    expect(result.rows).toEqual([
+      { date: "2026-08-26", description: "Comcast", amountCents: 7999, category: null },
+    ]);
   });
 
   it("matches headers case-insensitively and in any order", () => {
     const result = parseCsv(["Amount, DESCRIPTION ,Date", "42.50,Shell,2026-08-01"].join("\n"));
-    expect(result.rows).toEqual([{ date: "2026-08-01", description: "Shell", amountCents: 4250 }]);
+    expect(result.rows).toEqual([
+      { date: "2026-08-01", description: "Shell", amountCents: 4250, category: null },
+    ]);
   });
 
   it("ignores extra columns", () => {
@@ -135,7 +139,9 @@ describe("column mapping", () => {
       CHASE,
       mapping({ dateColumn: "Transaction Date", descriptionColumn: "Merchant", amountColumn: "Debit" })
     );
-    expect(result.rows).toEqual([{ date: "2026-08-26", description: "Comcast", amountCents: 7999 }]);
+    expect(result.rows).toEqual([
+      { date: "2026-08-26", description: "Comcast", amountCents: 7999, category: null },
+    ]);
   });
 
   it("uses the mapped date column, not another date-looking one", () => {
@@ -283,5 +289,107 @@ describe("detectDateFormat", () => {
   it("returns null for unrecognizable or empty values", () => {
     expect(detectDateFormat(["Comcast"])).toBeNull();
     expect(detectDateFormat([])).toBeNull();
+  });
+});
+
+describe("robustness", () => {
+  // Each of these crashed the server before, which the browser reported as
+  // an opaque "Failed to fetch" rather than anything actionable.
+  it.each(["Infinity", "-Infinity", "NaN", "1e400", "9".repeat(400) + ".00"])(
+    "skips the row for a pathological amount (%s)",
+    (value) => {
+      const result = parseCsv(csv(`2026-08-26,X,${value}`));
+      expect(result.rows).toEqual([]);
+      expect(result.skipped).toHaveLength(1);
+    }
+  );
+
+  it("skips an implausibly large amount", () => {
+    const result = parseCsv(csv("2026-08-26,X,999999999999.00"));
+    expect(result.skipped[0].reason).toContain("implausibly large");
+  });
+
+  it("reads accounting parentheses as negative", () => {
+    const charge = parseCsv(csv("2026-08-26,X,(79.99)"), mapping({ amountSign: "negative_is_charge" }));
+    expect(charge.rows[0].amountCents).toBe(7999);
+    // Under positive-is-charge the same row is the other side of the ledger.
+    expect(parseCsv(csv("2026-08-26,X,(79.99)")).rows).toEqual([]);
+  });
+
+  it("tolerates spaces inside amounts", () => {
+    expect(parseCsv(csv("2026-08-26,X,1 234.56")).rows[0].amountCents).toBe(123456);
+  });
+});
+
+describe("delimiters", () => {
+  it("reads semicolons", () => {
+    const result = parseCsv("date;description;amount\n2026-08-26;Comcast;79.99");
+    expect(result.rows[0].description).toBe("Comcast");
+  });
+
+  it("reads tabs", () => {
+    const result = parseCsv("date\tdescription\tamount\n2026-08-26\tComcast\t79.99");
+    expect(result.rows[0].amountCents).toBe(7999);
+  });
+
+  it("reads pipes", () => {
+    const result = parseCsv("date|description|amount\n2026-08-26|Comcast|79.99");
+    expect(result.rows[0].amountCents).toBe(7999);
+  });
+
+  it("keeps commas when a quoted description contains semicolons", () => {
+    const result = parseCsv('date,description,amount\n2026-08-26,"A; B; C",79.99');
+    expect(result.rows[0].description).toBe("A; B; C");
+  });
+
+  it("detects the delimiter in detectMapping too", () => {
+    const shape = detectMapping("date;description;amount\n2026-08-26;Comcast;79.99");
+    expect(shape.columns).toEqual(["date", "description", "amount"]);
+    expect(shape.unresolved).toEqual([]);
+  });
+});
+
+describe("category", () => {
+  const withCategory = ["date,description,amount,category", "2026-08-26,Comcast,79.99,Utilities"].join("\n");
+
+  it("is suggested when the file has one", () => {
+    const shape = detectMapping(withCategory);
+    expect(shape.suggested.categoryColumn).toBe("category");
+    // Suggested but optional — never blocks the user.
+    expect(shape.unresolved).toEqual([]);
+  });
+
+  it("is null when the file has none", () => {
+    const shape = detectMapping(csv("2026-08-26,Comcast,79.99"));
+    expect(shape.suggested.categoryColumn).toBeNull();
+    expect(shape.unresolved).toEqual([]);
+  });
+
+  it("is read when mapped", () => {
+    const result = parseCsv(withCategory, mapping({ categoryColumn: "category" }));
+    expect(result.rows[0].category).toBe("Utilities");
+  });
+
+  it("is left empty when not mapped", () => {
+    const result = parseCsv(withCategory, mapping());
+    expect(result.rows[0].category).toBeNull();
+  });
+
+  it("treats a blank cell as no category", () => {
+    const result = parseCsv(
+      ["date,description,amount,category", "2026-08-26,Comcast,79.99,"].join("\n"),
+      mapping({ categoryColumn: "category" })
+    );
+    expect(result.rows[0].category).toBeNull();
+  });
+
+  it("rejects a category column the file doesn't have", () => {
+    expect(() => parseCsv(withCategory, mapping({ categoryColumn: "Nope" }))).toThrow(CsvFormatError);
+  });
+
+  it("prefers a previously mapped category column", () => {
+    const file = ["date,description,amount,Bucket", "2026-08-26,Comcast,79.99,Utilities"].join("\n");
+    const shape = detectMapping(file, mapping({ categoryColumn: "Bucket" }));
+    expect(shape.suggested.categoryColumn).toBe("Bucket");
   });
 });
