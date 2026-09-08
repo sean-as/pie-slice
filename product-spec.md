@@ -286,21 +286,27 @@ up, log in, and see the groups you're in.
   other expense (view = linked group members only, edit/delete = creator
   only) — importing doesn't create a new access-control path.
 
+## Decided since (implementation details, revisit freely)
+
+- Session mechanism: opaque bearer token, stored in `localStorage`
+  (survives a browser restart, works from a separately-hosted frontend
+  without cookie/CORS complications). Password hashing: bcrypt.
+- Minimum password strength: length only, 8 characters.
+- Duplicate placeholder-member names: warned about, not blocked — adding
+  the same name twice asks for a confirming second submit.
+- Merchant normalization for CSV matching: case-folding and
+  whitespace-collapsing only. No trailing transaction-ID stripping, which
+  would be the fuzzy matching the non-goals rule out.
+- CSV limits: 1 MB and 2,000 rows. Unparseable rows are skipped and
+  reported to the user with their line numbers; only a file-level problem
+  (unreadable encoding, no header, a missing required column) rejects the
+  whole file.
+
 ## Open / not yet decided
 
-- Tech stack (separate decision from this spec) — React + FastAPI is
-  decided; session mechanism (cookie session vs. JWT) and password-hash
-  algorithm choice are still open.
-- Whether duplicate placeholder-member names should be blocked outright
-  vs. just warned about.
 - Whether there's any limit on group size or number of expenses (assume
   none for MVP unless a real constraint shows up).
-- Minimum password strength rule (length-only vs. more).
-- Exact merchant-name normalization for CSV matching (e.g. case-folding
-  and whitespace-trimming only, vs. also stripping trailing
-  transaction-ID noise some banks append) — affects how often a
-  remembered merchant actually matches next month's statement.
-- Whether there's a limit on CSV upload size/row count, and what happens
-  to rows that fail to parse (skip with a warning vs. reject the whole
-  file) — assume "skip unparseable rows, show the user what was skipped"
-  unless a real constraint shows up.
+- Whether the merchant normalization above is forgiving enough in
+  practice — banks that append a changing transaction ID to the
+  description would defeat it, and we'd only find out from a real
+  statement.
