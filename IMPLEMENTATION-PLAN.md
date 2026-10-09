@@ -124,6 +124,35 @@ users can see where the money goes rather than only who owes whom.
 - **Open questions.** Currency is single per group today (assumed); whether
   to chart it or keep it tabular (tabular first).
 
+## Planned: dedicated members page per group
+
+Members management moves off the group page onto its own page, e.g.
+`/group/:groupId/members`. The group page keeps expenses, balances and
+import; the "Members" section with the add-linked / add-placeholder forms
+is removed from it.
+
+- **Header.** Group name, with an optional group description beneath it,
+  then a member count ("5 members"). The count is a link/button that opens
+  the editing mode for the member list.
+- **Group description.** New optional field on groups: add to the group
+  model, `openapi.yaml` (create + update + read), and the create-group form.
+  Needs a way to edit it (and the name) from this page. Creator-only or any
+  member is a decision to take; default to any member, matching how members
+  are added today.
+- **Add / edit.** Existing add-linked-member (by email) and add-placeholder
+  forms move here, keeping the duplicate-name warning and the
+  existing-member validation. "Edit" covers renaming a placeholder and
+  removing a member; removal must be blocked (or require reassignment) for
+  anyone referenced by an expense split or settlement, so balances never
+  point at a missing member. Needs a backend rule and endpoint(s) — none
+  exist for rename/remove today.
+- **Navigation.** Group page header links to the members page (the count
+  there is the entry point too); members page links back to the group.
+  Route added in `App.tsx`; 404-not-403 for non-members, as elsewhere.
+- **Tests.** Count reflects adds/removes; removal blocked when referenced;
+  description optional and round-trips; non-member gets 404; duplicate-name
+  warning still shown.
+
 ## Decisions taken
 
 Recorded in the spec's "Decided since" section: bcrypt + bearer token in
