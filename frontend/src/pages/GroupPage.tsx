@@ -7,7 +7,6 @@ import { ExpenseForm } from "../components/ExpenseForm";
 import { CategoryMonthView } from "../components/CategoryMonthView";
 import { mergeLedger } from "../domain/ledger";
 import { BalancesView } from "../components/BalancesView";
-import { CsvImportPanel } from "../components/CsvImportPanel";
 import { ActionsMenu } from "../components/ActionsMenu";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
@@ -19,7 +18,6 @@ export function GroupPage() {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [balances, setBalances] = useState<BalancesResult | null>(null);
 
-  const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -105,7 +103,12 @@ export function GroupPage() {
 
       <CategoryMonthView expenses={expenses} members={group.members} />
 
-      <h2>Expenses</h2>
+      <div className="section-header">
+        <Link to={`/group/${group.id}/add`} className="button-link">
+          + Add expense
+        </Link>
+        <h2>Expenses</h2>
+      </div>
       <ul className="list">
         {ledger.length === 0 && <p className="meta">No expenses yet.</p>}
         {ledger.map((entry) => {
@@ -168,21 +171,6 @@ export function GroupPage() {
           );
         })}
       </ul>
-      {showExpenseForm ? (
-        <ExpenseForm
-          members={group.members}
-          onCancel={() => setShowExpenseForm(false)}
-          onSubmit={async (input) => {
-            await expenseService.addExpense(groupId!, input);
-            setShowExpenseForm(false);
-            await refresh();
-          }}
-        />
-      ) : (
-        <button onClick={() => setShowExpenseForm(true)}>+ Add expense</button>
-      )}
-
-      <CsvImportPanel groupId={group.id} onImported={refresh} />
     </div>
   );
 }
