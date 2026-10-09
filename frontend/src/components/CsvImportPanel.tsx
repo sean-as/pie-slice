@@ -5,9 +5,10 @@ import { expenseService } from "../services";
 import { CsvMappingForm } from "./CsvMappingForm";
 
 /**
- * Three-step CSV import: confirm how to read the file (banks disagree on
- * column names, amount signs and date order), then review the transactions
- * it holds, then submit. Nothing is created before that last step.
+ * Four-step CSV import: confirm how to read the file (banks disagree on
+ * column names, amount signs and date order), review the transactions it
+ * holds, confirm the selected ones (and trim them further), then submit.
+ * Nothing is created before that last step.
  *
  * The file is held in component state across the first two steps because
  * the server stores no statements — inspecting and uploading each send it.
@@ -19,6 +20,7 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
 
@@ -27,6 +29,7 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
     setShape(null);
     setPreview(null);
     setSelected(new Set());
+    setConfirming(false);
     if (fileInput.current) fileInput.current.value = "";
   }
 
@@ -101,6 +104,8 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
     }
   }
 
+  const selectedRows = preview?.rows.filter((r) => selected.has(r.id)) ?? [];
+  const selectedTotal = selectedRows.reduce((sum, r) => sum + r.amountCents, 0);
   const duplicateCount = preview?.rows.filter((r) => r.alreadyImported).length ?? 0;
 
   return (
@@ -124,7 +129,46 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
         <CsvMappingForm shape={shape} onSubmit={handleMapping} onCancel={reset} busy={busy} />
       )}
 
-      {preview && (
+      {preview && confirming && (
+        <>
+          <p className="meta">
+            Confirm these {selectedRows.length} transaction{selectedRows.length === 1 ? "" : "s"} —{" "}
+            {formatCents(selectedTotal)} in total. Remove any you don't want; nothing is added until
+            you import.
+          </p>
+          <ul className="list">
+            {selectedRows.map((row) => (
+              <li key={row.id} className="card import-row">
+                <span>
+                  {row.description} — {formatCents(row.amountCents)}
+                  <br />
+                  <span className="meta">
+                    {row.date}
+                    {row.category && ` · ${row.category}`}
+                    {row.alreadyImported && " · imported before"}
+                  </span>
+                </span>
+                <button type="button" className="secondary" onClick={() => toggle(row.id)} disabled={busy}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="actions">
+            <button type="button" onClick={handleConfirm} disabled={busy || selectedRows.length === 0}>
+              {`Import ${selectedRows.length} transaction${selectedRows.length === 1 ? "" : "s"}`}
+            </button>
+            <button type="button" className="secondary" onClick={() => setConfirming(false)} disabled={busy}>
+              Back
+            </button>
+            <button type="button" className="secondary" onClick={reset} disabled={busy}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {preview && !confirming && (
         <>
           <p className="meta">
             {preview.rows.length === 0
@@ -190,10 +234,10 @@ export function CsvImportPanel({ groupId, onImported }: { groupId: string; onImp
           )}
 
           <div className="actions">
-            <button type="button" onClick={handleConfirm} disabled={busy}>
+            <button type="button" onClick={() => setConfirming(true)} disabled={busy || selected.size === 0}>
               {selected.size === 0
-                ? "Import nothing"
-                : `Import ${selected.size} transaction${selected.size === 1 ? "" : "s"}`}
+                ? "Select transactions to import"
+                : `Review ${selected.size} selected`}
             </button>
             <button type="button" className="secondary" onClick={reset} disabled={busy}>
               Cancel

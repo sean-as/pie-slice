@@ -77,7 +77,7 @@ Still out of scope: CSV shapes that aren't one-row-per-transaction with a
 single amount column — separate debit/credit columns, running balances,
 preamble rows above the header.
 
-## Planned: confirmation step before import
+## Confirmation step before import (implemented)
 
 After the user picks rows on the review step, show a final confirmation
 window listing **only the selected transactions** (date, merchant, amount,
@@ -91,8 +91,9 @@ created until they confirm on this window.
 - Deselecting on the confirmation window updates the same selection state,
   so "Back" returns to review with it intact.
 - Empty selection disables the confirm button.
-- Tests: window shows only selected rows; deselecting updates count/total;
-  back preserves selection; confirm sends only the remaining rows.
+- Implemented in `CsvImportPanel.tsx` as a `confirming` state. No component
+  test harness exists in the frontend (tests are domain-only), so this was
+  verified by build/lint rather than automated tests.
 
 ## Decisions taken
 

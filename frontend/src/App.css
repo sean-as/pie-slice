@@ -259,6 +259,13 @@ ul.list {
   height: 1.1rem;
 }
 
+/* Confirmation list: text left, Remove button right. */
+.card.import-row {
+  justify-content: space-between;
+  align-items: center;
+  cursor: default;
+}
+
 .import-panel .actions {
   margin-top: 1rem;
 }
