@@ -153,6 +153,36 @@ is removed from it.
   description optional and round-trips; non-member gets 404; duplicate-name
   warning still shown.
 
+## Planned: group page layout — balances up top, one date-ordered ledger
+
+Reorder the group page to: group name and description → balances →
+expenses. Today it is name → members → balances → expenses, with
+settlements shown in the balances area and listed apart from expenses.
+(Members leave the page entirely; see the members-page task.)
+
+- **Balances section owns settling up.** The settle-up suggestions and the
+  "record a settlement" action live inside the balances block. Recorded
+  settlements are listed there too, each removable via the same "⋯" menu
+  used elsewhere, so a mistaken settlement can be undone from where it was
+  made. Deletion rules stay as today (creator-only, enforced server-side).
+- **Settlements also appear as rows in the expenses list.** The list below
+  balances becomes a single ledger of expenses *and* settlements, ordered
+  by date, newest first. Settlement rows are visually distinct (e.g.
+  "Alex paid Sam — $40.00", labelled "Settlement") and carry no category.
+  Ties on the same date break by creation time so the order is stable.
+- **No data-model change intended.** Settlements stay their own records
+  (they have different semantics: no split, no category, and they must stay
+  out of the category totals). The ledger is a merge of the two lists done
+  at read time — either client-side in `domain/` or a combined endpoint;
+  decide when starting. Settlement removal from a ledger row and from the
+  balances block call the same delete, so the two views can't disagree.
+- **Edit.** Expense rows keep edit + delete; settlement rows are
+  delete-only (as today).
+- **Tests.** Ordering by date with mixed types and same-day ties;
+  settlement row appears after recording and disappears after removal from
+  either place; balances update after removal; settlements excluded from
+  category totals; mobile layout stacks.
+
 ## Decisions taken
 
 Recorded in the spec's "Decided since" section: bcrypt + bearer token in
