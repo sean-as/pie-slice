@@ -20,6 +20,7 @@ import type {
   LoginInput,
   SignupInput,
   UpdateExpenseInput,
+  UpdateGroupInput,
   UpdateSettlementInput,
 } from "./types";
 
@@ -216,6 +217,7 @@ export class MockExpenseService implements ExpenseServiceApi {
     const group: Group = {
       id: id(),
       name: input.name,
+      description: input.description?.trim() || null,
       members: [{ id: id(), displayName: creator.displayName, userId: creator.id }],
     };
     db.groups[group.id] = group;
@@ -263,6 +265,48 @@ export class MockExpenseService implements ExpenseServiceApi {
 
     const member: Member = { id: id(), displayName: name, userId: null };
     group.members.push(member);
+    saveDb(db);
+    return delay(group);
+  }
+
+  async updateGroup(groupId: string, input: UpdateGroupInput): Promise<Group> {
+    const db = loadDb();
+    const group = requireMembership(db.groups[groupId], requireSessionUserId());
+    const name = input.name.trim();
+    if (!name) throw new Error("Group name is required.");
+    group.name = name;
+    group.description = input.description?.trim() || null;
+    saveDb(db);
+    return delay(group);
+  }
+
+  async renameMember(groupId: string, memberId: string, displayName: string): Promise<Group> {
+    const db = loadDb();
+    const group = requireMembership(db.groups[groupId], requireSessionUserId());
+    const member = group.members.find((m) => m.id === memberId);
+    if (!member) throw new Error("Member not found.");
+    if (member.userId) throw new Error("Only members without an account can be renamed.");
+    const name = displayName.trim();
+    if (!name) throw new Error("Name is required.");
+    member.displayName = name;
+    saveDb(db);
+    return delay(group);
+  }
+
+  async removeMember(groupId: string, memberId: string): Promise<Group> {
+    const db = loadDb();
+    const userId = requireSessionUserId();
+    const group = requireMembership(db.groups[groupId], userId);
+    const member = group.members.find((m) => m.id === memberId);
+    if (!member) throw new Error("Member not found.");
+    if (member.userId === userId) throw new Error("You can't remove yourself.");
+    const used =
+      (db.expenses[groupId] ?? []).some(
+        (e) => e.payerId === memberId || e.splits.some((s) => s.memberId === memberId)
+      ) ||
+      (db.settlements[groupId] ?? []).some((s) => s.fromMemberId === memberId || s.toMemberId === memberId);
+    if (used) throw new Error("That member appears in expenses or settlements, so they can't be removed.");
+    group.members = group.members.filter((m) => m.id !== memberId);
     saveDb(db);
     return delay(group);
   }

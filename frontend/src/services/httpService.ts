@@ -16,6 +16,7 @@ import type {
   LoginInput,
   SignupInput,
   UpdateExpenseInput,
+  UpdateGroupInput,
   UpdateSettlementInput,
 } from "./types";
 
@@ -147,6 +148,21 @@ export class HttpExpenseService implements ExpenseServiceApi {
       method: "POST",
       body: JSON.stringify({ displayName }),
     });
+  }
+
+  async updateGroup(groupId: string, input: UpdateGroupInput): Promise<Group> {
+    return request<Group>(`/groups/${groupId}`, { method: "PUT", body: JSON.stringify(input) });
+  }
+
+  async renameMember(groupId: string, memberId: string, displayName: string): Promise<Group> {
+    return request<Group>(`/groups/${groupId}/members/${memberId}`, {
+      method: "PUT",
+      body: JSON.stringify({ displayName }),
+    });
+  }
+
+  async removeMember(groupId: string, memberId: string): Promise<Group> {
+    return request<Group>(`/groups/${groupId}/members/${memberId}`, { method: "DELETE" });
   }
 
   async listExpenses(groupId: string): Promise<Expense[]> {

@@ -23,6 +23,13 @@ export type LoginInput = {
 
 export type CreateGroupInput = {
   name: string;
+  description?: string | null;
+};
+
+export type UpdateGroupInput = {
+  name: string;
+  /** Blank clears it. */
+  description?: string | null;
 };
 
 export type AddExpenseInput = {
@@ -81,6 +88,12 @@ export interface ExpenseServiceApi {
   addLinkedMember(groupId: string, email: string): Promise<Group>;
   /** Adds a name-only member with no account. */
   addPlaceholderMember(groupId: string, displayName: string): Promise<Group>;
+  /** Renames the group and/or edits its description. Any member may. */
+  updateGroup(groupId: string, input: UpdateGroupInput): Promise<Group>;
+  /** Only members without an account can be renamed. */
+  renameMember(groupId: string, memberId: string, displayName: string): Promise<Group>;
+  /** Throws if the member is you, or appears in any expense or settlement. */
+  removeMember(groupId: string, memberId: string): Promise<Group>;
 
   listExpenses(groupId: string): Promise<Expense[]>;
   addExpense(groupId: string, input: AddExpenseInput): Promise<Expense>;

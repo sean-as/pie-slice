@@ -19,6 +19,8 @@ export type Member = {
 export type Group = {
   id: string;
   name: string;
+  /** Optional. */
+  description?: string | null;
   members: Member[];
 };
 

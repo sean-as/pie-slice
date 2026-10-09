@@ -35,6 +35,7 @@ function GroupsList({ displayName }: { displayName: string }) {
   const navigate = useNavigate();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -56,7 +57,7 @@ function GroupsList({ displayName }: { displayName: string }) {
     }
     setSubmitting(true);
     try {
-      const group = await expenseService.createGroup({ name });
+      const group = await expenseService.createGroup({ name, description: groupDescription.trim() || null });
       navigate(`/group/${group.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the group.");
@@ -92,6 +93,12 @@ function GroupsList({ displayName }: { displayName: string }) {
           value={groupName}
           onChange={(e) => setGroupName(e.target.value)}
           placeholder="Cabin trip"
+        />
+        <input
+          type="text"
+          value={groupDescription}
+          onChange={(e) => setGroupDescription(e.target.value)}
+          placeholder="Description (optional)"
         />
         <button type="submit" disabled={submitting}>
           {submitting ? "Creating…" : "Create group"}

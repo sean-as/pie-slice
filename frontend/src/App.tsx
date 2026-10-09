@@ -3,6 +3,7 @@ import { Routes, Route, Link, useNavigate, useLocation } from "react-router-dom"
 import { HomePage } from "./pages/HomePage";
 import { SignupPage } from "./pages/SignupPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MembersPage } from "./pages/MembersPage";
 import { GroupPage } from "./pages/GroupPage";
 import { useCurrentUser } from "./hooks/useCurrentUser";
 import { expenseService } from "./services";
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/group/:groupId" element={<GroupPage />} />
+          <Route path="/group/:groupId/members" element={<MembersPage />} />
         </Routes>
       </main>
     </div>

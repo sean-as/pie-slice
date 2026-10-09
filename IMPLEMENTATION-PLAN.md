@@ -95,7 +95,7 @@ created until they confirm on this window.
   test harness exists in the frontend (tests are domain-only), so this was
   verified by build/lint rather than automated tests.
 
-## Planned: balances by category per month
+## balances by category per month (implemented)
 
 A group view showing spending broken down by category for each month, so
 users can see where the money goes rather than only who owes whom.
@@ -124,7 +124,7 @@ users can see where the money goes rather than only who owes whom.
 - **Open questions.** Currency is single per group today (assumed); whether
   to chart it or keep it tabular (tabular first).
 
-## Planned: dedicated members page per group
+## dedicated members page per group (implemented)
 
 Members management moves off the group page onto its own page, e.g.
 `/group/:groupId/members`. The group page keeps expenses, balances and
@@ -153,7 +153,7 @@ is removed from it.
   description optional and round-trips; non-member gets 404; duplicate-name
   warning still shown.
 
-## Planned: group page layout — balances up top, one date-ordered ledger
+## group page layout — balances up top, one date-ordered ledger (implemented)
 
 Reorder the group page to: group name and description → balances →
 expenses. Today it is name → members → balances → expenses, with
@@ -182,6 +182,24 @@ settlements shown in the balances area and listed apart from expenses.
   settlement row appears after recording and disappears after removal from
   either place; balances update after removal; settlements excluded from
   category totals; mobile layout stacks.
+
+## Implementation notes for the three tasks above
+
+- **Category view** computed client-side (`domain/categoryMonths.ts`), no
+  new endpoint; month navigation, not a month picker. Per-member figures are
+  paid and owed per category.
+- **Members page** at `/group/:groupId/members`. Backend adds
+  `description` on groups, `PUT /groups/{id}`, `PUT`/`DELETE
+  /groups/{id}/members/{memberId}`. Any member may edit group details;
+  only account-less members can be renamed; removal is refused for
+  yourself and for anyone in an expense or settlement. A small in-place
+  `ALTER TABLE` in `main.py` adds the column to existing databases (no
+  migration tool in this project).
+- **Ledger** merged client-side (`domain/ledger.ts`). Settlement rows in the
+  ledger are remove-only; editing a settlement is in the balances block.
+- Verified by 196 backend tests (new member/group cases) and 104 frontend
+  tests (new ledger/category cases) plus a clean build. The new pages have
+  no component tests (no harness) and were not clicked through in a browser.
 
 ## Decisions taken
 
