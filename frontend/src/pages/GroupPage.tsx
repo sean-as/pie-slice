@@ -4,7 +4,6 @@ import type { BalancesResult, Expense, Group, Settlement } from "../domain/types
 import { formatCents } from "../domain/money";
 import { expenseService } from "../services";
 import { ExpenseForm } from "../components/ExpenseForm";
-import { CategoryMonthView } from "../components/CategoryMonthView";
 import { mergeLedger } from "../domain/ledger";
 import { BalancesView } from "../components/BalancesView";
 import { ActionsMenu } from "../components/ActionsMenu";
@@ -100,8 +99,6 @@ export function GroupPage() {
           onDelete={handleDeleteSettlement}
         />
       )}
-
-      <CategoryMonthView expenses={expenses} members={group.members} />
 
       <div className="section-header">
         <h2>Expenses</h2>

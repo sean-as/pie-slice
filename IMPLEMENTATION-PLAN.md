@@ -95,7 +95,7 @@ created until they confirm on this window.
   test harness exists in the frontend (tests are domain-only), so this was
   verified by build/lint rather than automated tests.
 
-## balances by category per month (implemented)
+## TODO: balances by category per month — redo with better UX
 
 A group view showing spending broken down by category for each month, so
 users can see where the money goes rather than only who owes whom.
@@ -185,7 +185,10 @@ settlements shown in the balances area and listed apart from expenses.
 
 ## Implementation notes for the three tasks above
 
-- **Category view** computed client-side (`domain/categoryMonths.ts`), no
+- **Category view** was built and then removed from the group page (the
+  month-by-month list was not good UX). Reimplement with a better design.
+  Kept for reuse: `domain/categoryMonths.ts` and its tests. Original notes:
+  computed client-side (`domain/categoryMonths.ts`), no
   new endpoint; month navigation, not a month picker. Per-member figures are
   paid and owed per category.
 - **Members page** at `/group/:groupId/members`. Backend adds
