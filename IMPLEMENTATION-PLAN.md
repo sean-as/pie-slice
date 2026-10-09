@@ -77,6 +77,23 @@ Still out of scope: CSV shapes that aren't one-row-per-transaction with a
 single amount column — separate debit/credit columns, running balances,
 preamble rows above the header.
 
+## Planned: confirmation step before import
+
+After the user picks rows on the review step, show a final confirmation
+window listing **only the selected transactions** (date, merchant, amount,
+category) and the total. The user can refine from there: deselect a row to
+drop it, or go back to the review step to change the selection. Nothing is
+created until they confirm on this window.
+
+- Frontend-only change to the import flow: inspect → map → review →
+  **confirm selected** → create. No new endpoint; the existing confirm call
+  just fires from the new window instead of the review step.
+- Deselecting on the confirmation window updates the same selection state,
+  so "Back" returns to review with it intact.
+- Empty selection disables the confirm button.
+- Tests: window shows only selected rows; deselecting updates count/total;
+  back preserves selection; confirm sends only the remaining rows.
+
 ## Decisions taken
 
 Recorded in the spec's "Decided since" section: bcrypt + bearer token in
