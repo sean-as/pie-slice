@@ -5,13 +5,9 @@ import type { AddSettlementInput } from "../services";
 import { ActionsMenu } from "./ActionsMenu";
 import { SettlementForm } from "./SettlementForm";
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /**
- * Who owes what, and where it gets settled: suggested transfers can be
- * recorded in one click, any settlement can be entered by hand, and every
+ * Who owes what, and where it gets settled: a suggested transfer can be
+ * recorded (opening the form pre-filled with it), and every
  * recorded settlement is listed here so a mistaken one can be removed from
  * the place it was made. (Settlements also show in the group's ledger.)
  */
@@ -34,7 +30,7 @@ export function BalancesView({
 }) {
   const nameById = new Map(members.map((m) => [m.id, m.displayName]));
   const name = (id: string) => nameById.get(id) ?? "Unknown";
-  const [showForm, setShowForm] = useState(false);
+  const [settlingIndex, setSettlingIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,49 +70,33 @@ export function BalancesView({
         <p className="meta">Everyone is settled up.</p>
       ) : (
         <ul className="list">
-          {balances.settleUp.map((t, i) => (
+          {balances.settleUp.map((t, i) =>
+            settlingIndex === i ? (
+              <li key={i}>
+                <SettlementForm
+                  members={members}
+                  prefill={t}
+                  onCancel={() => setSettlingIndex(null)}
+                  onSubmit={async (input) => {
+                    await onRecord(input);
+                    setSettlingIndex(null);
+                  }}
+                />
+              </li>
+            ) : (
             <li key={i} className="card">
               <span>
                 {name(t.fromMemberId)} → {name(t.toMemberId)} · {formatCents(t.amountCents)}
               </span>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() =>
-                  guarded(
-                    () =>
-                      onRecord({
-                        fromMemberId: t.fromMemberId,
-                        toMemberId: t.toMemberId,
-                        amountCents: t.amountCents,
-                        date: todayIso(),
-                      }),
-                    "Could not record that settlement."
-                  )
-                }
-              >
-                Record as paid
+              <button type="button" className="secondary" onClick={() => setSettlingIndex(i)}>
+                + Record settlement
               </button>
             </li>
-          ))}
+            )
+          )}
         </ul>
       )}
       {error && <p className="error">{error}</p>}
-
-      {showForm ? (
-        <SettlementForm
-          members={members}
-          onCancel={() => setShowForm(false)}
-          onSubmit={async (input) => {
-            await onRecord(input);
-            setShowForm(false);
-          }}
-        />
-      ) : (
-        <button type="button" onClick={() => setShowForm(true)}>
-          + Record settlement
-        </button>
-      )}
 
       {settlements.length > 0 && (
         <>

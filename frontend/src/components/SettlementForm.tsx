@@ -10,17 +10,22 @@ function todayIso(): string {
 export function SettlementForm({
   members,
   initial,
+  prefill,
   onSubmit,
   onCancel,
 }: {
   members: Member[];
   initial?: Settlement;
+  /** Starting values for a new settlement, e.g. a suggested transfer. */
+  prefill?: { fromMemberId: string; toMemberId: string; amountCents: number };
   onSubmit: (input: AddSettlementInput) => Promise<void>;
   onCancel?: () => void;
 }) {
-  const [fromMemberId, setFromMemberId] = useState(initial?.fromMemberId ?? members[0]?.id ?? "");
-  const [toMemberId, setToMemberId] = useState(initial?.toMemberId ?? members[1]?.id ?? members[0]?.id ?? "");
-  const [amount, setAmount] = useState(initial ? (initial.amountCents / 100).toFixed(2) : "");
+  const [fromMemberId, setFromMemberId] = useState(initial?.fromMemberId ?? prefill?.fromMemberId ?? members[0]?.id ?? "");
+  const [toMemberId, setToMemberId] = useState(initial?.toMemberId ?? prefill?.toMemberId ?? members[1]?.id ?? members[0]?.id ?? "");
+  const [amount, setAmount] = useState(
+    initial || prefill ? (((initial ?? prefill)!.amountCents) / 100).toFixed(2) : ""
+  );
   const [date, setDate] = useState(initial?.date ?? todayIso());
   const [method, setMethod] = useState(initial?.method ?? "");
   const [error, setError] = useState<string | null>(null);
