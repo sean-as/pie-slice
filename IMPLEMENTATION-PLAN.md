@@ -95,6 +95,35 @@ created until they confirm on this window.
   test harness exists in the frontend (tests are domain-only), so this was
   verified by build/lint rather than automated tests.
 
+## Planned: balances by category per month
+
+A group view showing spending broken down by category for each month, so
+users can see where the money goes rather than only who owes whom.
+
+- **Grouping.** Expenses bucketed by `YYYY-MM` of `date` and by `category`;
+  uncategorised expenses fall into an explicit "Uncategorised" bucket so
+  totals always reconcile with the overall figure.
+- **What "balance" means here.** Per month and category: total spent, plus
+  each member's share (what they paid vs. what they owe), reusing the
+  existing integer-cent split math. Settlements carry no category and are
+  excluded from category totals.
+- **Category matching.** Case-and-whitespace-only normalization, same rule
+  as merchants, so "Food" and "food " land in one bucket.
+- **Backend.** Prefer a read-only `GET /groups/{groupId}/balances/by-category`
+  (optional `from`/`to` month params), derived on read like existing
+  balances — nothing stored. Add to `openapi.yaml`. Alternative: compute
+  client-side from the expense list in `domain/`, which avoids an endpoint
+  but duplicates the aggregation if other clients appear; decide when
+  starting.
+- **Frontend.** New view on the group page: month selector (default
+  current month), table of categories with totals and per-member amounts,
+  month-over-month navigation. Mobile layout must stack like the rest.
+- **Tests.** Month boundaries (31st / 1st), uncategorised bucket, category
+  normalization, cents summing exactly with uneven splits, settlements
+  excluded, empty month.
+- **Open questions.** Currency is single per group today (assumed); whether
+  to chart it or keep it tabular (tabular first).
+
 ## Decisions taken
 
 Recorded in the spec's "Decided since" section: bcrypt + bearer token in
