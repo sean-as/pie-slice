@@ -358,9 +358,10 @@ ul.list {
   border-bottom: none;
 }
 
-/* Section title with its primary action on the left. */
+/* Section title with its primary action pushed to the right. */
 .section-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;

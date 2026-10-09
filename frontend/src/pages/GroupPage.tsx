@@ -104,10 +104,10 @@ export function GroupPage() {
       <CategoryMonthView expenses={expenses} members={group.members} />
 
       <div className="section-header">
+        <h2>Expenses</h2>
         <Link to={`/group/${group.id}/add`} className="button-link">
           + Add expense
         </Link>
-        <h2>Expenses</h2>
       </div>
       <ul className="list">
         {ledger.length === 0 && <p className="meta">No expenses yet.</p>}
