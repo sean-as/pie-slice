@@ -204,6 +204,50 @@ settlements shown in the balances area and listed apart from expenses.
   tests (new ledger/category cases) plus a clean build. The new pages have
   no component tests (no harness) and were not clicked through in a browser.
 
+## TODO: make it deployable
+
+Target is undecided (single VPS vs. split PaaS); these are needed either way.
+Ordered by how badly each one bites if skipped.
+
+**Blockers**
+1. **Demo seed runs on every startup** (`seed()` in `main.py`): creates
+   alice/bob with `password123`. Gate behind an env flag, off by default.
+2. **CORS is hardcoded to localhost** (`main.py`). Read allowed origins from
+   an env var (e.g. `CORS_ORIGINS`).
+3. **Tokens never expire.** A leaked token is valid forever. Add an expiry
+   (and ideally purge old rows).
+4. **No rate limiting on login/signup**, so passwords can be brute-forced.
+   Add per-IP / per-email throttling (or do it at the reverse proxy).
+5. **HTTPS.** Tokens travel as bearer headers; terminate TLS at Caddy/nginx
+   or the host. Never expose plain HTTP.
+6. **Frontend API URL.** Build with `VITE_API_URL` set to the real API URL
+   (it is baked in at build time).
+
+**Data**
+7. **Pick the database.** SQLite works only on a persistent volume with a
+   single backend process. For a PaaS use Postgres (`DATABASE_URL` + driver);
+   the in-place `ALTER TABLE` in `main.py` is written for SQLite and needs
+   checking, or replaced by a real migration tool (Alembic).
+8. **Backups** (Litestream for SQLite, or host snapshots for Postgres) and a
+   tested restore.
+
+**Packaging and ops**
+9. **Dockerfile(s)** for the backend (uv, no `--reload`, run via
+   uvicorn/gunicorn) and a static build of `frontend/dist`; optional
+   Compose file with Caddy.
+10. **Config via env**, documented in `.env.example`: `DATABASE_URL`,
+    `CORS_ORIGINS`, seed flag, token lifetime.
+11. **Health endpoint** (`/api/health`) for the host's checks.
+12. **Logging / error visibility**: the unhandled-exception handler logs;
+    make sure logs reach somewhere, and consider Sentry.
+13. **Disable or protect `/docs`** if the API should not be self-describing.
+14. **CI**: run both test suites and the frontend build on every push.
+
+**Check before launch**
+- CSV upload limits (1 MB / 2,000 rows) are also enforced at the proxy.
+- Smoke test end to end against the deployed URL: signup, group, expense,
+  CSV import, settlement.
+
 ## Decisions taken
 
 Recorded in the spec's "Decided since" section: bcrypt + bearer token in
