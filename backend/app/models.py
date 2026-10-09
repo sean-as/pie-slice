@@ -63,11 +63,22 @@ class Member(ApiModel):
 class Group(ApiModel):
     id: str
     name: str
+    description: str | None = None
     members: list[Member]
 
 
 class CreateGroupInput(ApiModel):
     name: str = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class UpdateGroupInput(ApiModel):
+    name: str = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class RenameMemberInput(ApiModel):
+    display_name: str = Field(min_length=1, alias="displayName")
 
 
 class AddLinkedMemberInput(ApiModel):

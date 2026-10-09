@@ -110,7 +110,7 @@ def _group_by_id(session: Session, group_id: str) -> GroupRow | None:
 
 
 def _group_row_to_pydantic(row: GroupRow) -> Group:
-    return Group(id=row.id, name=row.name, members=[_member_row_to_pydantic(m) for m in row.members])
+    return Group(id=row.id, name=row.name, description=row.description, members=[_member_row_to_pydantic(m) for m in row.members])
 
 
 class Store:
@@ -186,9 +186,9 @@ class Store:
             )
             return [_group_row_to_pydantic(r) for r in rows]
 
-    def create_group(self, name: str, creator: StoredUser) -> Group:
+    def create_group(self, name: str, creator: StoredUser, description: str | None = None) -> Group:
         with SessionLocal() as session:
-            group_row = GroupRow(id=new_id(), name=name)
+            group_row = GroupRow(id=new_id(), name=name, description=description)
             session.add(group_row)
             session.flush()
             session.add(
@@ -197,6 +197,51 @@ class Store:
             session.commit()
             session.refresh(group_row)
             return _group_row_to_pydantic(group_row)
+
+    def update_group(self, group_id: str, name: str, description: str | None) -> Group:
+        with SessionLocal() as session:
+            row = _group_by_id(session, group_id)
+            row.name = name
+            row.description = description
+            session.commit()
+            return _group_row_to_pydantic(row)
+
+    def rename_member(self, group_id: str, member_id: str, display_name: str) -> Group:
+        with SessionLocal() as session:
+            member = session.execute(
+                select(MemberRow).where(MemberRow.group_id == group_id, MemberRow.id == member_id)
+            ).scalar_one()
+            member.display_name = display_name
+            session.commit()
+            return _group_row_to_pydantic(_group_by_id(session, group_id))
+
+    def member_is_referenced(self, group_id: str, member_id: str) -> bool:
+        """True if any expense (payer or split) or settlement in the group names this member."""
+        with SessionLocal() as session:
+            as_payer = session.execute(
+                select(ExpenseRow.pk).where(ExpenseRow.group_id == group_id, ExpenseRow.payer_id == member_id)
+            ).first()
+            as_split = session.execute(
+                select(ExpenseSplitRow.pk)
+                .join(ExpenseRow, ExpenseRow.id == ExpenseSplitRow.expense_id)
+                .where(ExpenseRow.group_id == group_id, ExpenseSplitRow.member_id == member_id)
+            ).first()
+            as_settlement = session.execute(
+                select(SettlementRow.pk).where(
+                    SettlementRow.group_id == group_id,
+                    (SettlementRow.from_member_id == member_id) | (SettlementRow.to_member_id == member_id),
+                )
+            ).first()
+            return any(x is not None for x in (as_payer, as_split, as_settlement))
+
+    def remove_member(self, group_id: str, member_id: str) -> Group:
+        with SessionLocal() as session:
+            member = session.execute(
+                select(MemberRow).where(MemberRow.group_id == group_id, MemberRow.id == member_id)
+            ).scalar_one()
+            session.delete(member)
+            session.commit()
+            return _group_row_to_pydantic(_group_by_id(session, group_id))
 
     def add_linked_member(self, group_id: str, target: StoredUser) -> Group:
         with SessionLocal() as session:

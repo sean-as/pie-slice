@@ -39,6 +39,7 @@ class GroupRow(Base):
     pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     members: Mapped[list["MemberRow"]] = relationship(
         back_populates="group", cascade="all, delete-orphan", order_by="MemberRow.pk"

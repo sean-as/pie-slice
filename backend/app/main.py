@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import inspect, text
 
 from app import db_models  # noqa: F401  (registers tables on Base.metadata)
 from app.db import Base, engine
@@ -12,6 +13,21 @@ from app.routers import auth, balances, expenses, groups, imports, settlements
 from app.store import seed
 
 Base.metadata.create_all(bind=engine)
+
+
+def _add_missing_columns() -> None:
+    """
+    create_all never alters an existing table, so a database created before
+    groups had a description would 500 on every group query. There is no
+    migration tool here; add the one nullable column in place.
+    """
+    columns = {c["name"] for c in inspect(engine).get_columns("groups")}
+    if "description" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE groups ADD COLUMN description VARCHAR(1000)"))
+
+
+_add_missing_columns()
 
 app = FastAPI(
     title="pie-slice API",

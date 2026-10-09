@@ -120,3 +120,111 @@ class TestAddMembers:
             headers=bob_headers,
         )
         assert response.status_code == 404
+
+
+class TestGroupDescriptionAndEditing:
+    def test_description_is_optional_and_round_trips(self, client, signup):
+        headers, _ = signup()
+        plain = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        assert plain["description"] is None
+
+        described = client.post(
+            "/api/groups", json={"name": "B", "description": " Cabin weekend "}, headers=headers
+        ).json()
+        assert described["description"] == "Cabin weekend"
+
+    def test_update_name_and_description_and_blank_clears(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A", "description": "x"}, headers=headers).json()
+
+        updated = client.put(
+            f"/api/groups/{group['id']}", json={"name": "Renamed", "description": "  "}, headers=headers
+        )
+        assert updated.status_code == 200
+        assert updated.json()["name"] == "Renamed"
+        assert updated.json()["description"] is None
+
+    def test_non_member_cannot_update(self, client, signup):
+        alice_headers, _ = signup(email="alice@example.com")
+        bob_headers, _ = signup(email="bob@example.com")
+        group = client.post("/api/groups", json={"name": "A"}, headers=alice_headers).json()
+        response = client.put(f"/api/groups/{group['id']}", json={"name": "Hijack"}, headers=bob_headers)
+        assert response.status_code == 404
+
+
+class TestEditMembers:
+    def _placeholder(self, client, headers, group_id, name="Dana"):
+        group = client.post(
+            f"/api/groups/{group_id}/members/placeholder", json={"displayName": name}, headers=headers
+        ).json()
+        return next(m for m in group["members"] if m["displayName"] == name)
+
+    def test_rename_placeholder(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        dana = self._placeholder(client, headers, group["id"])
+
+        response = client.put(
+            f"/api/groups/{group['id']}/members/{dana['id']}", json={"displayName": "Danielle"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert "Danielle" in [m["displayName"] for m in response.json()["members"]]
+
+    def test_cannot_rename_linked_member(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        me = group["members"][0]
+        response = client.put(
+            f"/api/groups/{group['id']}/members/{me['id']}", json={"displayName": "X"}, headers=headers
+        )
+        assert response.status_code == 409
+
+    def test_remove_unreferenced_member(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        dana = self._placeholder(client, headers, group["id"])
+
+        response = client.delete(f"/api/groups/{group['id']}/members/{dana['id']}", headers=headers)
+        assert response.status_code == 200
+        assert len(response.json()["members"]) == 1
+
+    def test_cannot_remove_yourself(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        me = group["members"][0]
+        response = client.delete(f"/api/groups/{group['id']}/members/{me['id']}", headers=headers)
+        assert response.status_code == 409
+
+    def test_cannot_remove_member_used_in_expense_or_settlement(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        me = group["members"][0]
+        dana = self._placeholder(client, headers, group["id"], "Dana")
+        erin = self._placeholder(client, headers, group["id"], "Erin")
+
+        client.post(
+            f"/api/groups/{group['id']}/expenses",
+            json={
+                "description": "Lunch",
+                "amountCents": 1000,
+                "payerId": me["id"],
+                "date": "2026-08-26",
+                "splitMethod": "equal",
+                "splitInput": {"method": "equal", "memberIds": [me["id"], dana["id"]]},
+            },
+            headers=headers,
+        )
+        assert client.delete(f"/api/groups/{group['id']}/members/{dana['id']}", headers=headers).status_code == 409
+
+        client.post(
+            f"/api/groups/{group['id']}/settlements",
+            json={"fromMemberId": erin["id"], "toMemberId": me["id"], "amountCents": 100, "date": "2026-08-27"},
+            headers=headers,
+        )
+        assert client.delete(f"/api/groups/{group['id']}/members/{erin['id']}", headers=headers).status_code == 409
+
+    def test_unknown_member_is_404(self, client, signup):
+        headers, _ = signup()
+        group = client.post("/api/groups", json={"name": "A"}, headers=headers).json()
+        response = client.delete(f"/api/groups/{group['id']}/members/nope", headers=headers)
+        assert response.status_code == 404
