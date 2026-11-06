@@ -225,7 +225,7 @@ Tailscale. SQLite on a persistent disk (single process, two users).
 ### Remaining
 
 **1. Packaging**
-- Multi-stage `Dockerfile` at `pie-slice/`: node stage builds the frontend
+- Multi-stage `Dockerfile` at the repo root: node stage builds the frontend
   with `VITE_API_URL=/api`; python stage runs `uv sync --frozen --no-dev`,
   copies `dist` to `/app/static`, runs `uvicorn app.main:app --host 0.0.0.0
   --port 8000` (no `--reload`, single worker — required by SQLite).
@@ -234,35 +234,107 @@ Tailscale. SQLite on a persistent disk (single process, two users).
   unless-stopped`, healthcheck on `/api/health`, bound to `127.0.0.1:8000`.
 - `.env.example` and a `.dockerignore`.
 
-**2. GCP one-time setup** (documented as `deploy/SETUP.md` with the exact
-`gcloud` commands; Terraform later only if it earns its keep)
-- Project, billing, enable Compute, Artifact Registry, IAP, IAM Credentials.
-- Artifact Registry Docker repo (`pie-slice`).
-- VM: `e2-micro`, us-west1/central1/east1 (free-tier regions), Debian 12,
-  30 GB standard disk, **no external IP** (Cloud NAT for outbound pulls) —
-  or an ephemeral IP with all ingress firewalled; decide at setup. Startup
-  script installs Docker + Compose plugin and Tailscale.
-- Firewall: deny all ingress except IAP range `35.235.240.0/20` on 22.
-- Swap file (1 GB RAM is tight for pulls).
-- Tailscale on the VM; `tailscale serve --bg 8000` gives
-  `https://<vm>.<tailnet>.ts.net` with a real cert. Founding users join the
-  tailnet (or are shared the node).
+**2. Infrastructure (Terraform, `infra/`)**
 
-**3. GitHub Actions** (`.github/workflows/` at the **repo root**, filtered to
-`pie-slice/**`)
+The code is public; the state and real values are not. See "What lives where"
+below for the rule on every value.
+
+*Bootstrap, once by hand* (the only steps outside Terraform, listed in
+`infra/README.md`): create the project, link billing, create the state bucket
+(versioned, uniform access, public access prevention on), then
+`terraform init -backend-config=backend.hcl`.
+
+*Layout:*
+
+```
+infra/
+  versions.tf      provider pins; empty backend "gcs" {}
+  variables.tf     project_id, region, zone, github_repository_id
+  apis.tf          compute, artifactregistry, iap, iamcredentials,
+                   secretmanager, billingbudgets
+  network.tf       VPC, subnet, IAP-only firewall
+  compute.tf       VM, boot disk, data disk
+  registry.tf      Artifact Registry repo + cleanup policy
+  iam.tf           the two service accounts and their roles
+  wif.tf           Workload Identity pool and provider
+  secrets.tf       secret containers + per-secret IAM (no values)
+  storage.tf       backup bucket with a 7-day lifecycle
+  budget.tf        billing budget alert
+  outputs.tf       the values to copy into Actions variables
+  startup.sh.tftpl
+  terraform.tfvars.example
+  backend.hcl.example
+```
+
+*Resources:*
+- **Network:** custom VPC and subnet with Private Google Access. Firewall
+  allows only the IAP range `35.235.240.0/20` on 22; nothing else inbound.
+  Open decision: Cloud NAT vs an ephemeral IP for outbound traffic. Both are
+  billed, so price them before the first apply.
+- **VM:** `e2-micro`, Debian 12, in a free-tier region (us-west1, us-central1
+  or us-east1), OS Login on. 30 GB standard disk in total, split into a boot
+  disk and a **separate data disk** mounted at `/opt/pie-slice/data`, so
+  replacing the VM never touches the database.
+- **Startup script:** idempotent, since it runs on every boot. Installs Docker,
+  the Compose plugin and Tailscale, adds a swap file (1 GB RAM is tight for
+  pulls), mounts the data disk, configures Docker credentials for Artifact
+  Registry, reads the Tailscale key from Secret Manager, runs `tailscale up`
+  and `tailscale serve --bg 8000`. That gives
+  `https://<vm>.<tailnet>.ts.net` with a real cert. Founding users join the
+  tailnet or are shared the node.
+- **Service account `vm`:** `artifactregistry.reader` on the repo,
+  `secretmanager.secretAccessor` per secret, object admin on the backup bucket
+  only, log and metric writer.
+- **Service account `deployer`:** `artifactregistry.writer` on the repo,
+  `iap.tunnelResourceAccessor`, `compute.osAdminLogin` on the VM (Docker access
+  is root-equivalent anyway), `compute.viewer`, and `iam.serviceAccountUser` on
+  the `vm` account. Nothing broader.
+- **Workload Identity:** provider for
+  `https://token.actions.githubusercontent.com`, with an attribute condition
+  pinning `assertion.repository_id` (immutable, unlike the repo name) and
+  `assertion.ref == "refs/heads/main"`. Required, because the repo is public.
+  `deployer` is bound to that repository's principal set only.
+
+*Terraform rules:*
+- `prevent_destroy` on the data disk and backup bucket.
+- Pass the startup script as `metadata["startup-script"]`, not
+  `metadata_startup_script`, which forces VM replacement on any edit.
+- Secret *values* never go through Terraform, or they land in state.
+- Apply locally at first. CI runs only `terraform fmt -check` and
+  `terraform validate` (`init -backend=false`), which need no credentials.
+  Never run `plan` in Actions on this public repo: its output would expose
+  real resource details in public logs.
+
+**3. GitHub Actions** (`.github/workflows/`)
 - `ci.yml` on PRs and pushes: backend `uv run pytest`, frontend `npm test`,
-  lint, `npm run build`.
+  lint, `npm run build`, Terraform fmt and validate.
 - `deploy.yml` on push to `main` after CI passes: auth to GCP with
   **Workload Identity Federation** (no long-lived JSON key); build and push
   image tagged with the commit SHA (+ `latest`); then
   `gcloud compute ssh --tunnel-through-iap` to the VM and run
   `IMAGE_TAG=<sha> docker compose pull && docker compose up -d`; poll
   `/api/health` and fail the run if it never goes green.
-- Service account split: `deployer` (Artifact Registry writer, IAP tunnel
-  user, OS Login on the one VM) — nothing broader.
-- Repo secrets/vars: `GCP_PROJECT`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`,
-  `VM_NAME`, `VM_ZONE`.
+- Reads only Actions **variables** (table below). There are no Actions
+  secrets, because Workload Identity replaces the stored key.
+- Runs in a `production` environment limited to `main`, on GitHub-hosted
+  runners, never on `pull_request`.
 - Rollback = re-run deploy with an older SHA (`workflow_dispatch` input).
+
+**What lives where**
+
+| Value | Where | Why |
+|---|---|---|
+| Tailscale auth key (tagged, so node key expiry is off) | Secret Manager: `tailscale-auth-key` | Credential; read by the VM at boot |
+| Heartbeat ping URL (phase 2) | Secret Manager: `heartbeat-url` | Anyone holding it can fake a healthy ping |
+| Future app secrets | Secret Manager, written to a root-only `/opt/pie-slice/.env` by the deploy step | Credentials. None exist today |
+| `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `VM_NAME`, `VM_ZONE`, `AR_REPOSITORY` | GitHub Actions variables, copied from Terraform outputs | Needed to log in to GCP, so they can't come from Secret Manager; identifiers, not credentials |
+| `DATABASE_URL`, `DOCS_ENABLED=false`, `SEED_DEMO=false`, `TOKEN_TTL_DAYS` | `compose.yaml`, committed | Not sensitive |
+| `terraform.tfvars`, `backend.hcl` | Local only, gitignored | Real project details |
+| Terraform state | Private GCS bucket | Holds real resource details; never in git |
+
+Gitignore `*.tfvars`, `*.tfstate*`, `.terraform/` and `backend.hcl`; commit the
+`.example` files and `.terraform.lock.hcl`. Add a secret value with
+`gcloud secrets versions add <name> --data-file=-`.
 
 **4. Data safety**
 - Nightly: `sqlite3 .backup` to a temp file, then upload to a private GCS
@@ -272,8 +344,7 @@ Tailscale. SQLite on a persistent disk (single process, two users).
 - DB lives on the VM disk, outside the container, so deploys never touch it.
 
 **5. Safe incremental change**
-- Schema changes remain the in-place `ALTER TABLE` pattern in `main.py` for
-  now; add Alembic when the first non-additive change appears.
+- Schema changes go through Alembic (see "Before first deploy").
 - Take a backup as the first step of every deploy.
 
 **6. Smoke test (manual, after first deploy)**
@@ -297,27 +368,10 @@ the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
 - Cloud Monitoring VM alerts (disk > 80%, VM down) and Docker logs to Cloud
   Logging.
 
-### Secrets and infrastructure as code (decided)
-- **Repo:** moving to a standalone public repo for portfolio use, so nothing
-  committed may be sensitive.
-- **Google Secret Manager** holds runtime secrets (Tailscale auth key,
-  heartbeat URL, any future app secret). The VM's service account gets
-  `secretAccessor` per secret, and fetches values at deploy/boot into a
-  root-only `.env`.
-- **GitHub Actions variables** hold the GCP bootstrap config (project,
-  Workload Identity provider, deployer account). These cannot live in Secret
-  Manager, since they are needed to authenticate to GCP in the first place,
-  and they are identifiers rather than credentials.
-- **Terraform** in `infra/`, committed publicly, with no real values:
-  - State in a private, versioned GCS bucket (`backend "gcs"`), never in git.
-    State can hold sensitive values and real resource details.
-  - `*.tfvars`, `*.tfstate*`, `.terraform/` gitignored; commit only
-    `terraform.tfvars.example` and `.terraform.lock.hcl`.
-  - Terraform creates the secret *containers* and IAM only. Values are added
-    out of band (`gcloud secrets versions add`) so they never enter state.
-  - Backend bucket passed with `-backend-config`, not hardcoded.
-  - Applied locally at first; plan/apply in Actions only if it earns its keep.
-    Never run `plan` on fork PRs, and keep plan output out of public logs.
+### Repo (decided)
+Moving to a standalone public repo for portfolio use, so nothing committed may
+be sensitive. Scan the tree and history for secrets and real transaction data
+before the move.
 
 ### Deferred (not needed while private)
 Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
@@ -325,11 +379,14 @@ before any public exposure. Signup is still open to anyone on the tailnet; add
 an invite code or disable signup once the founding users have accounts.
 
 ### Order of work
-1. Dockerfile + compose + `.env.example` (verify locally with `docker compose up`).
-2. `ci.yml`.
-3. `deploy/SETUP.md`, then provision GCP together (needs your account).
-4. `deploy.yml`, first deploy, smoke test.
-5. Backups + restore test.
+1. Scan, then move to the standalone repo.
+2. Alembic, cookie auth, WAL.
+3. Dockerfile + compose (verify locally with `docker compose up`).
+4. `ci.yml`.
+5. Terraform: bootstrap, apply, add secret values, copy outputs into Actions
+   variables (needs your account).
+6. `deploy.yml`, first deploy, smoke test.
+7. Backups + restore test.
 
 ## Decisions taken
 
