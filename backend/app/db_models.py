@@ -9,8 +9,9 @@ and Postgres) and gives deterministic insertion ordering for free, which
 from __future__ import annotations
 
 from datetime import date as date_type
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -31,6 +32,9 @@ class TokenRow(Base):
 
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Nullable only so the column can be added in place to existing databases;
+    # a NULL (pre-expiry) token is treated as expired.
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class GroupRow(Base):

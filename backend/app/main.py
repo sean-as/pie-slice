@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
 from app import db_models  # noqa: F401  (registers tables on Base.metadata)
@@ -25,21 +28,37 @@ def _add_missing_columns() -> None:
     if "description" not in columns:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE groups ADD COLUMN description VARCHAR(1000)"))
+    token_columns = {c["name"] for c in inspect(engine).get_columns("tokens")}
+    if "created_at" not in token_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tokens ADD COLUMN created_at DATETIME"))
 
 
 _add_missing_columns()
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# /docs is on for local dev; set DOCS_ENABLED=false to hide it when deployed.
+_docs = _env_flag("DOCS_ENABLED", True)
+
 app = FastAPI(
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
     title="pie-slice API",
     version="0.2.0",
     description="Implements ../openapi.yaml. See that file for the authoritative contract.",
 )
 
-# Dev-only allowlist: the frontend's Vite dev server and preview server.
-# Tighten this for any real deployment.
+# Defaults to the Vite dev/preview servers. Set CORS_ORIGINS (comma-separated)
+# only if the frontend is served from a different origin than the API; the
+# single-container deployment is same-origin and needs none.
+_DEV_ORIGINS = "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:4173"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173", "http://127.0.0.1:4173"],
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", _DEV_ORIGINS).split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +87,13 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
 
 
 api = APIRouter(prefix="/api")
+
+
+@api.get("/health", include_in_schema=False)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 api.include_router(auth.router)
 api.include_router(groups.router)
 api.include_router(expenses.router)
@@ -76,6 +102,21 @@ api.include_router(balances.router)
 api.include_router(imports.router)
 app.include_router(api)
 
-# Demo data so the API has something to show immediately (e.g. via /docs).
-# Login as alice@example.com / password123 or bob@example.com / password123.
-seed()
+# If a built frontend is present (the container image puts it at STATIC_DIR),
+# serve it from the same origin as the API, falling back to index.html so
+# client-side routes survive a refresh.
+_static = Path(os.environ.get("STATIC_DIR", "static"))
+if _static.is_dir():
+    app.mount("/assets", StaticFiles(directory=_static / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str) -> FileResponse:
+        candidate = (_static / path).resolve()
+        if path and candidate.is_file() and _static.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(_static / "index.html")
+
+
+# Demo data (alice/bob, password123) is opt-in: SEED_DEMO=true for local dev.
+if _env_flag("SEED_DEMO"):
+    seed()

@@ -206,49 +206,91 @@ settlements shown in the balances area and listed apart from expenses.
   tests (new ledger/category cases) plus a clean build. The new pages have
   no component tests (no harness) and were not clicked through in a browser.
 
-## TODO: make it deployable
+## TODO: make it deployable — phase 1 (private, founding users)
 
-Target is undecided (single VPS vs. split PaaS); these are needed either way.
-Ordered by how badly each one bites if skipped.
+**Target:** one GCE `e2-micro` VM running Docker Compose, deployed by GitHub
+Actions on push to `main`. Not public: no external ports, reached over
+Tailscale. SQLite on a persistent disk (single process, two users).
 
-**Blockers**
-1. **Demo seed runs on every startup** (`seed()` in `main.py`): creates
-   alice/bob with `password123`. Gate behind an env flag, off by default.
-2. **CORS is hardcoded to localhost** (`main.py`). Read allowed origins from
-   an env var (e.g. `CORS_ORIGINS`).
-3. **Tokens never expire.** A leaked token is valid forever. Add an expiry
-   (and ideally purge old rows).
-4. **No rate limiting on login/signup**, so passwords can be brute-forced.
-   Add per-IP / per-email throttling (or do it at the reverse proxy).
-5. **HTTPS.** Tokens travel as bearer headers; terminate TLS at Caddy/nginx
-   or the host. Never expose plain HTTP.
-6. **Frontend API URL.** Build with `VITE_API_URL` set to the real API URL
-   (it is baked in at build time).
+### Done (app side, `backend/app`)
+- Demo seed only when `SEED_DEMO=true` (default off).
+- `CORS_ORIGINS` env; deployment is same-origin so it is unneeded there.
+- Tokens expire (`TOKEN_TTL_DAYS`, default 90); expired rows are deleted on
+  use. `tokens.created_at` added in place; pre-existing tokens count as
+  expired (one-time re-login).
+- `GET /api/health`; `DOCS_ENABLED=false` hides `/docs`.
+- Backend serves the built frontend from `STATIC_DIR` (SPA fallback), so one
+  container, one origin.
 
-**Data**
-7. **Pick the database.** SQLite works only on a persistent volume with a
-   single backend process. For a PaaS use Postgres (`DATABASE_URL` + driver);
-   the in-place `ALTER TABLE` in `main.py` is written for SQLite and needs
-   checking, or replaced by a real migration tool (Alembic).
-8. **Backups** (Litestream for SQLite, or host snapshots for Postgres) and a
-   tested restore.
+### Remaining
 
-**Packaging and ops**
-9. **Dockerfile(s)** for the backend (uv, no `--reload`, run via
-   uvicorn/gunicorn) and a static build of `frontend/dist`; optional
-   Compose file with Caddy.
-10. **Config via env**, documented in `.env.example`: `DATABASE_URL`,
-    `CORS_ORIGINS`, seed flag, token lifetime.
-11. **Health endpoint** (`/api/health`) for the host's checks.
-12. **Logging / error visibility**: the unhandled-exception handler logs;
-    make sure logs reach somewhere, and consider Sentry.
-13. **Disable or protect `/docs`** if the API should not be self-describing.
-14. **CI**: run both test suites and the frontend build on every push.
+**1. Packaging**
+- Multi-stage `Dockerfile` at `pie-slice/`: node stage builds the frontend
+  with `VITE_API_URL=/api`; python stage runs `uv sync --frozen --no-dev`,
+  copies `dist` to `/app/static`, runs `uvicorn app.main:app --host 0.0.0.0
+  --port 8000` (no `--reload`, single worker — required by SQLite).
+- `compose.yaml`: service `app`, image from Artifact Registry, volume
+  `./data:/data`, `DATABASE_URL=sqlite:////data/pieslice.db`, `restart:
+  unless-stopped`, healthcheck on `/api/health`, bound to `127.0.0.1:8000`.
+- `.env.example` and a `.dockerignore`.
 
-**Check before launch**
-- CSV upload limits (1 MB / 2,000 rows) are also enforced at the proxy.
-- Smoke test end to end against the deployed URL: signup, group, expense,
-  CSV import, settlement.
+**2. GCP one-time setup** (documented as `deploy/SETUP.md` with the exact
+`gcloud` commands; Terraform later only if it earns its keep)
+- Project, billing, enable Compute, Artifact Registry, IAP, IAM Credentials.
+- Artifact Registry Docker repo (`pie-slice`).
+- VM: `e2-micro`, us-west1/central1/east1 (free-tier regions), Debian 12,
+  30 GB standard disk, **no external IP** (Cloud NAT for outbound pulls) —
+  or an ephemeral IP with all ingress firewalled; decide at setup. Startup
+  script installs Docker + Compose plugin and Tailscale.
+- Firewall: deny all ingress except IAP range `35.235.240.0/20` on 22.
+- Swap file (1 GB RAM is tight for pulls).
+- Tailscale on the VM; `tailscale serve --bg 8000` gives
+  `https://<vm>.<tailnet>.ts.net` with a real cert. Founding users join the
+  tailnet (or are shared the node).
+
+**3. GitHub Actions** (`.github/workflows/` at the **repo root**, filtered to
+`pie-slice/**`)
+- `ci.yml` on PRs and pushes: backend `uv run pytest`, frontend `npm test`,
+  lint, `npm run build`.
+- `deploy.yml` on push to `main` after CI passes: auth to GCP with
+  **Workload Identity Federation** (no long-lived JSON key); build and push
+  image tagged with the commit SHA (+ `latest`); then
+  `gcloud compute ssh --tunnel-through-iap` to the VM and run
+  `IMAGE_TAG=<sha> docker compose pull && docker compose up -d`; poll
+  `/api/health` and fail the run if it never goes green.
+- Service account split: `deployer` (Artifact Registry writer, IAP tunnel
+  user, OS Login on the one VM) — nothing broader.
+- Repo secrets/vars: `GCP_PROJECT`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`,
+  `VM_NAME`, `VM_ZONE`.
+- Rollback = re-run deploy with an older SHA (`workflow_dispatch` input).
+
+**4. Data safety**
+- Nightly: `sqlite3 .backup` to a temp file, then upload to a private GCS
+  bucket (7-day lifecycle) from a cron/systemd timer on the VM; or daily
+  disk snapshot schedule as the cheap start. **Do a test restore before
+  trusting it.**
+- DB lives on the VM disk, outside the container, so deploys never touch it.
+
+**5. Safe incremental change**
+- Schema changes remain the in-place `ALTER TABLE` pattern in `main.py` for
+  now; add Alembic when the first non-additive change appears.
+- Take a backup as the first step of every deploy.
+
+**6. Smoke test (manual, after first deploy)**
+Signup, create group, add expense, CSV import, settle up, spending page, over
+the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
+
+### Deferred (not needed while private)
+Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
+before any public exposure. Signup is still open to anyone on the tailnet; add
+an invite code or disable signup once the founding users have accounts.
+
+### Order of work
+1. Dockerfile + compose + `.env.example` (verify locally with `docker compose up`).
+2. `ci.yml`.
+3. `deploy/SETUP.md`, then provision GCP together (needs your account).
+4. `deploy.yml`, first deploy, smoke test.
+5. Backups + restore test.
 
 ## Decisions taken
 

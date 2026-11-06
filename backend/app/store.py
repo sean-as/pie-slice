@@ -12,10 +12,12 @@ SQLAlchemy underneath.
 
 from __future__ import annotations
 
+import os
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import date as date_type
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,6 +42,19 @@ from app.models import ColumnMapping, Expense, Group, Member, Settlement, Split,
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+def _utcnow() -> datetime:
+    # Naive UTC: SQLite drops tzinfo, so store and compare naive consistently.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _token_expired(created_at: datetime | None) -> bool:
+    """Tokens last TOKEN_TTL_DAYS (default 90). No timestamp (pre-expiry row) = expired."""
+    if created_at is None:
+        return True
+    ttl = timedelta(days=float(os.environ.get("TOKEN_TTL_DAYS", "90")))
+    return _utcnow() - created_at > ttl
 
 
 @dataclass
@@ -144,14 +159,20 @@ class Store:
     def issue_token(self, user_id: str) -> str:
         token = secrets.token_hex(32)
         with SessionLocal() as session:
-            session.add(TokenRow(token=token, user_id=user_id))
+            session.add(TokenRow(token=token, user_id=user_id, created_at=_utcnow()))
             session.commit()
         return token
 
     def user_id_for_token(self, token: str) -> str | None:
         with SessionLocal() as session:
             row = session.execute(select(TokenRow).where(TokenRow.token == token)).scalar_one_or_none()
-            return row.user_id if row else None
+            if row is None:
+                return None
+            if _token_expired(row.created_at):
+                session.delete(row)
+                session.commit()
+                return None
+            return row.user_id
 
     def revoke_token(self, token: str) -> None:
         with SessionLocal() as session:
