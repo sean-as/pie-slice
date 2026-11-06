@@ -280,6 +280,23 @@ Tailscale. SQLite on a persistent disk (single process, two users).
 Signup, create group, add expense, CSV import, settle up, spending page, over
 the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
 
+### Before first deploy (decided)
+- **Alembic** baseline of the current schema; replace `_add_missing_columns`
+  with `alembic upgrade head` on container start; SQLite batch mode.
+- **Auth token in an `HttpOnly; Secure; SameSite=Lax` cookie** instead of
+  `localStorage`; same-origin deployment keeps CSRF simple. Bearer header
+  still accepted for tests/tools. Existing sessions are invalidated.
+- **SQLite WAL mode + busy timeout** in `db.py`; Litestream is an option for
+  continuous backup in place of the nightly job.
+
+### Phase 2: monitoring (after initial deployment)
+- The app is tailnet-only, so Google's uptime checks can't reach it. Use a
+  dead-man's-switch: a systemd timer on the VM curls `/api/health` and pings
+  a heartbeat service (e.g. healthchecks.io); missing pings email/notify.
+- Alert on failed backup runs the same way (ping only on success).
+- Cloud Monitoring VM alerts (disk > 80%, VM down) and Docker logs to Cloud
+  Logging.
+
 ### Deferred (not needed while private)
 Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
 before any public exposure. Signup is still open to anyone on the tailnet; add
