@@ -454,3 +454,39 @@ ul.list {
 .spend-members td:first-child {
   text-align: left;
 }
+
+.view-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.stacked-chart {
+  margin: 0 0 1rem;
+}
+
+.stacked-chart svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chart-month {
+  cursor: pointer;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  vertical-align: -1px;
+}

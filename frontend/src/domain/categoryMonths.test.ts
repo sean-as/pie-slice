@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categoryByMonth, previousMonth, UNCATEGORISED } from "./categoryMonths";
+import { categoryByMonth, categoryByYear, previousMonth, totalThrough, UNCATEGORISED } from "./categoryMonths";
 import type { Expense } from "./types";
 
 function exp(date: string, amountCents: number, category: string | null, payerId = "a", splits = [
@@ -67,5 +67,32 @@ describe("previousMonth", () => {
   it("steps back one calendar month, across year boundaries", () => {
     expect(previousMonth("2026-08")).toBe("2026-07");
     expect(previousMonth("2026-01")).toBe("2025-12");
+  });
+});
+
+describe("categoryByYear", () => {
+  it("rolls months into years, newest first, categories summing to the year", () => {
+    const out = categoryByYear([
+      exp("2025-12-31", 100, "Food"),
+      exp("2026-01-01", 200, "Food"),
+      exp("2026-06-15", 300, "food "),
+      exp("2026-06-16", 50, null),
+    ]);
+    expect(out.map((y) => [y.month, y.totalCents])).toEqual([
+      ["2026", 550],
+      ["2025", 100],
+    ]);
+    expect(out[0].categories.map((c) => [c.category, c.totalCents])).toEqual([
+      ["Food", 500],
+      [UNCATEGORISED, 50],
+    ]);
+  });
+});
+
+describe("totalThrough", () => {
+  it("counts only same-year expenses up to the month-day, inclusive", () => {
+    const e = [exp("2025-03-01", 100, null), exp("2025-03-02", 200, null), exp("2026-01-01", 400, null)];
+    expect(totalThrough(e, "2025", "03-01")).toBe(100);
+    expect(totalThrough(e, "2025", "12-31")).toBe(300);
   });
 });

@@ -35,11 +35,31 @@ function categoryKey(category: string | null | undefined): string {
  * Months are newest first; categories within a month by size, largest first.
  */
 export function categoryByMonth(expenses: Expense[]): MonthBreakdown[] {
+  return categoryByPeriod(expenses, 7);
+}
+
+/**
+ * Same breakdown per calendar year; `month` holds "YYYY". Years are newest
+ * first. A year is whatever expenses exist in it — callers decide whether
+ * to present the current one as year-to-date.
+ */
+export function categoryByYear(expenses: Expense[]): MonthBreakdown[] {
+  return categoryByPeriod(expenses, 4);
+}
+
+/** Total of expenses in `year` dated on or before `monthDay` ("MM-DD"). */
+export function totalThrough(expenses: Expense[], year: string, monthDay: string): number {
+  return expenses
+    .filter((e) => e.date.slice(0, 4) === year && e.date.slice(5) <= monthDay)
+    .reduce((sum, e) => sum + e.amountCents, 0);
+}
+
+function categoryByPeriod(expenses: Expense[], keyLength: number): MonthBreakdown[] {
   type Bucket = { label: string; totalCents: number; members: Map<string, MemberCategoryAmounts> };
   const months = new Map<string, Map<string, Bucket>>();
 
   for (const expense of expenses) {
-    const month = expense.date.slice(0, 7);
+    const month = expense.date.slice(0, keyLength);
     const key = categoryKey(expense.category);
     const label = key === "" ? UNCATEGORISED : (expense.category ?? "").trim();
 

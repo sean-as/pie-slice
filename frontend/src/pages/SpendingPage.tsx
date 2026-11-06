@@ -2,13 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import type { Expense, Group } from "../domain/types";
 import { formatCents } from "../domain/money";
-import { categoryByMonth, previousMonth } from "../domain/categoryMonths";
+import { categoryByMonth, categoryByYear, previousMonth, totalThrough } from "../domain/categoryMonths";
+import { StackedMonthChart } from "../components/StackedMonthChart";
+import { categoryColors } from "../domain/categoryColors";
 import { expenseService } from "../services";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function todayParts(): { year: string; monthDay: string } {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return { year: String(now.getFullYear()), monthDay: `${pad(now.getMonth() + 1)}-${pad(now.getDate())}` };
 }
 
 function percent(part: number, whole: number): number {
@@ -20,6 +28,7 @@ export function SpendingPage() {
   const { groupId } = useParams<{ groupId: string }>();
   const [group, setGroup] = useState<Group | null | undefined>(undefined);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [view, setView] = useState<"year" | "month">("year");
   const [index, setIndex] = useState(0);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
 
@@ -48,12 +57,45 @@ export function SpendingPage() {
     );
   }
 
-  const months = categoryByMonth(expenses);
+  const byYear = view === "year";
+  const months = byYear ? categoryByYear(expenses) : categoryByMonth(expenses);
   const at = Math.min(index, Math.max(months.length - 1, 0));
   const current = months[at];
-  const prior = current ? months.find((m) => m.month === previousMonth(current.month)) : undefined;
+  const today = todayParts();
+  const ytd = byYear && current?.month === today.year;
   const nameById = new Map(group.members.map((m) => [m.id, m.displayName]));
-  const delta = current && prior ? current.totalCents - prior.totalCents : null;
+
+  // What to compare against: last year (same dates, if this one is still in
+  // progress) or last calendar month.
+  let delta: number | null = null;
+  let against = "";
+  if (current && byYear) {
+    const prevYear = String(Number(current.month) - 1);
+    if (months.some((y) => y.month === prevYear)) {
+      const prevTotal = totalThrough(expenses, prevYear, ytd ? today.monthDay : "12-31");
+      delta = current.totalCents - prevTotal;
+      against = ytd ? `same point in ${prevYear}` : prevYear;
+    }
+  } else if (current) {
+    const prior = months.find((m) => m.month === previousMonth(current.month));
+    if (prior) {
+      delta = current.totalCents - prior.totalCents;
+      against = monthLabel(prior.month);
+    }
+  }
+  const chartYear = current ? (byYear ? current.month : current.month.slice(0, 4)) : "";
+  const allMonths = categoryByMonth(expenses);
+  const yearCategories = current
+    ? (categoryByYear(expenses).find((y) => y.month === chartYear)?.categories ?? [])
+    : [];
+  const colors = categoryColors(yearCategories);
+  const periodLabel = current ? (byYear ? (ytd ? `${current.month} · year to date` : current.month) : monthLabel(current.month)) : "";
+
+  function switchView(next: "year" | "month") {
+    setView(next);
+    setIndex(0);
+    setOpenCategory(null);
+  }
 
   function go(next: number) {
     setIndex(next);
@@ -67,6 +109,15 @@ export function SpendingPage() {
       </p>
       <h1>Spending</h1>
 
+      <div className="view-toggle" role="group" aria-label="Group spending by">
+        <button type="button" className={byYear ? "" : "secondary"} aria-pressed={byYear} onClick={() => switchView("year")}>
+          Year
+        </button>
+        <button type="button" className={byYear ? "secondary" : ""} aria-pressed={!byYear} onClick={() => switchView("month")}>
+          Month
+        </button>
+      </div>
+
       {!current ? (
         <p className="meta">No expenses yet — nothing to break down.</p>
       ) : (
@@ -75,17 +126,17 @@ export function SpendingPage() {
             <button
               type="button"
               className="secondary"
-              aria-label="Earlier month"
+              aria-label={byYear ? "Earlier year" : "Earlier month"}
               disabled={at >= months.length - 1}
               onClick={() => go(at + 1)}
             >
               ←
             </button>
-            <strong>{monthLabel(current.month)}</strong>
+            <strong>{periodLabel}</strong>
             <button
               type="button"
               className="secondary"
-              aria-label="Later month"
+              aria-label={byYear ? "Later year" : "Later month"}
               disabled={at === 0}
               onClick={() => go(at - 1)}
             >
@@ -98,11 +149,23 @@ export function SpendingPage() {
             {delta !== null && (
               <span className="meta">
                 {delta === 0
-                  ? `same as ${monthLabel(prior!.month)}`
-                  : `${formatCents(Math.abs(delta))} ${delta > 0 ? "more" : "less"} than ${monthLabel(prior!.month)}`}
+                  ? `same as ${against}`
+                  : `${formatCents(Math.abs(delta))} ${delta > 0 ? "more" : "less"} than ${against}`}
               </span>
             )}
           </div>
+
+          <StackedMonthChart
+            year={chartYear}
+            months={allMonths.filter((m) => m.month.startsWith(chartYear))}
+            yearCategories={yearCategories}
+            selectedMonth={byYear ? undefined : current.month}
+            onSelectMonth={(month) => {
+              setView("month");
+              setIndex(allMonths.findIndex((m) => m.month === month));
+              setOpenCategory(null);
+            }}
+          />
 
           <ul className="list">
             {current.categories.map((c) => {
@@ -123,7 +186,7 @@ export function SpendingPage() {
                       </span>
                     </span>
                     <span className="spend-bar" aria-hidden="true">
-                      <span className="spend-bar-fill" style={{ width: `${share}%` }} />
+                      <span className="spend-bar-fill" style={{ width: `${share}%`, background: colors.get(c.category.trim().toLowerCase()) }} />
                     </span>
                   </button>
                   {open && (
