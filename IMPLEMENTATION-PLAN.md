@@ -297,6 +297,28 @@ the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
 - Cloud Monitoring VM alerts (disk > 80%, VM down) and Docker logs to Cloud
   Logging.
 
+### Secrets and infrastructure as code (decided)
+- **Repo:** moving to a standalone public repo for portfolio use, so nothing
+  committed may be sensitive.
+- **Google Secret Manager** holds runtime secrets (Tailscale auth key,
+  heartbeat URL, any future app secret). The VM's service account gets
+  `secretAccessor` per secret, and fetches values at deploy/boot into a
+  root-only `.env`.
+- **GitHub Actions variables** hold the GCP bootstrap config (project,
+  Workload Identity provider, deployer account). These cannot live in Secret
+  Manager, since they are needed to authenticate to GCP in the first place,
+  and they are identifiers rather than credentials.
+- **Terraform** in `infra/`, committed publicly, with no real values:
+  - State in a private, versioned GCS bucket (`backend "gcs"`), never in git.
+    State can hold sensitive values and real resource details.
+  - `*.tfvars`, `*.tfstate*`, `.terraform/` gitignored; commit only
+    `terraform.tfvars.example` and `.terraform.lock.hcl`.
+  - Terraform creates the secret *containers* and IAM only. Values are added
+    out of band (`gcloud secrets versions add`) so they never enter state.
+  - Backend bucket passed with `-backend-config`, not hardcoded.
+  - Applied locally at first; plan/apply in Actions only if it earns its keep.
+    Never run `plan` on fork PRs, and keep plan output out of public logs.
+
 ### Deferred (not needed while private)
 Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
 before any public exposure. Signup is still open to anyone on the tailnet; add
