@@ -7,10 +7,10 @@ took. Kept as a record of decisions; the spec itself is the live document.
 
 | # | Spec requirement | Was | Closed by |
 |---|---|---|---|
-| 1 | CSV import (user stories 15–19) | Missing entirely | `b2cb48e`, `0aa9fbe` |
-| 2 | Payer / split / settlement participants must be existing members | Accepted unvalidated | `f254785` |
-| 3 | Duplicate placeholder names should be discouraged | No warning | `0aa9fbe` |
-| 4 | Must work on mobile browsers | No media queries | `0aa9fbe` |
+| 1 | CSV import (user stories 15–19) | Missing entirely | `b4f15a3`, `33dea8b` |
+| 2 | Payer / split / settlement participants must be existing members | Accepted unvalidated | `b5b3d5e` |
+| 3 | Duplicate placeholder names should be discouraged | No warning | `33dea8b` |
+| 4 | Must work on mobile browsers | No media queries | `33dea8b` |
 
 Everything else traced to working code: bcrypt hashing, generic login
 error, a token that survives a browser restart, 404-not-403 for non-member
@@ -369,9 +369,9 @@ the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
   Logging.
 
 ### Repo (decided)
-Moving to a standalone public repo for portfolio use, so nothing committed may
-be sensitive. Scan the tree and history for secrets and real transaction data
-before the move.
+Standalone public repo for portfolio use, so nothing committed may be
+sensitive. The tree and history were scanned for secrets and real transaction
+data before the move.
 
 ### Deferred (not needed while private)
 Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
@@ -379,7 +379,7 @@ before any public exposure. Signup is still open to anyone on the tailnet; add
 an invite code or disable signup once the founding users have accounts.
 
 ### Order of work
-1. Scan, then move to the standalone repo.
+1. ~~Scan, then move to the standalone repo.~~ Done.
 2. Alembic, cookie auth, WAL.
 3. Dockerfile + compose (verify locally with `docker compose up`).
 4. `ci.yml`.
