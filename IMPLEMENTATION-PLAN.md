@@ -321,7 +321,10 @@ infra/
   secrets, because Workload Identity replaces the stored key.
 - Runs in a `production` environment limited to `main`, on GitHub-hosted
   runners, never on `pull_request`.
-- Rollback = re-run deploy with an older SHA (`workflow_dispatch` input).
+- Rollback = run deploy with an older SHA (`workflow_dispatch` input), not by
+  re-running an old run. Across a schema migration, also restore the matching
+  `pre-deploy/` backup (no downgrade migrations). `latest` only moves after the
+  new container is verified healthy.
 
 **What lives where**
 

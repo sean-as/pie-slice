@@ -1,0 +1,139 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Rollback: full 40-char commit SHA whose image is already in Artifact Registry"
+        required: true
+        type: string
+
+# Rollback = run this workflow by hand with an older SHA. Do NOT re-run an old
+# push run: that redeploys the old image. A rollback across a schema migration
+# also needs the matching pre-deploy backup restored (no downgrade migrations).
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    # Run after CI passes on push; on manual rollback the ci job is skipped.
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.ci.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Never two deploys at once, and never cancel one halfway. Scoped to this
+    # job so CI runs are not queued behind a deploy.
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    environment: production # restricted to main in repo settings; pinned by the WIF condition
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation, no stored key
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      VM_NAME: ${{ vars.VM_NAME }}
+      VM_ZONE: ${{ vars.VM_ZONE }}
+      AR_REPOSITORY: ${{ vars.AR_REPOSITORY }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.sha }}
+    steps:
+      - name: Validate SHA
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit SHA"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Compute image name
+        run: echo "IMAGE_REPO=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/pie-slice" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        if: github.event_name == 'push'
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          docker build -t "${IMAGE_REPO}:${TARGET_SHA}" .
+          docker push "${IMAGE_REPO}:${TARGET_SHA}"
+
+      - name: Check rollback image exists
+        if: github.event_name == 'workflow_dispatch'
+        run: gcloud artifacts docker images describe "${IMAGE_REPO}:${TARGET_SHA}" > /dev/null
+
+      - name: Copy compose.yaml to the VM
+        run: |
+          gcloud compute scp compose.yaml "${VM_NAME}:/tmp/compose.yaml" \
+            --zone "$VM_ZONE" --project "$GCP_PROJECT_ID" --tunnel-through-iap \
+            --ssh-key-expire-after=30m --quiet
+
+      - name: Back up, deploy, verify
+        run: |
+          gcloud compute ssh "$VM_NAME" --zone "$VM_ZONE" --project "$GCP_PROJECT_ID" \
+            --tunnel-through-iap --ssh-key-expire-after=30m --quiet -- \
+            "BUCKET=${GCP_PROJECT_ID}-pie-slice-backups IMAGE_REPO=${IMAGE_REPO} SHA=${TARGET_SHA} bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/pie-slice
+          sudo install -m 0644 /tmp/compose.yaml compose.yaml
+          rm -f /tmp/compose.yaml
+
+          # Safety net first: consistent snapshot of the live DB (skipped on the first deploy).
+          # Run as the app's uid so any -wal/-shm files stay owned by it.
+          if [ -f data/pieslice.db ]; then
+            sudo -u '#1000' sqlite3 data/pieslice.db ".backup /tmp/pre-deploy.db" </dev/null
+            sudo gcloud storage cp /tmp/pre-deploy.db "gs://${BUCKET}/pre-deploy/$(date -u +%Y%m%dT%H%M%SZ)-${SHA}.db" </dev/null
+            sudo rm -f /tmp/pre-deploy.db
+          fi
+
+          # Persist the target in .env so a manual `docker compose up` later
+          # cannot silently fall back to another tag.
+          set_env() {
+            if sudo grep -q "^$1=" .env; then
+              sudo sed -i "s|^$1=.*|$1=$2|" .env
+            else
+              echo "$1=$2" | sudo tee -a .env > /dev/null
+            fi
+          }
+          sudo touch .env && sudo chmod 600 .env
+          set_env IMAGE_REPO "$IMAGE_REPO"
+          set_env IMAGE_TAG "$SHA"
+
+          sudo docker compose pull </dev/null
+          sudo docker compose up -d </dev/null
+
+          # Fail the run unless this commit's container is up and healthy.
+          running=""; health=""
+          for _ in $(seq 1 30); do
+            cid=$(sudo docker compose ps -aq app </dev/null || true)
+            if [ -n "$cid" ]; then
+              running=$(sudo docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)
+              health=$(sudo docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid" 2>/dev/null || true)
+              if [ "$running" = "${IMAGE_REPO}:${SHA}" ] && [ "$health" = healthy ]; then
+                echo "healthy: $running"
+                sudo docker image prune -af --filter "until=168h" </dev/null > /dev/null
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          # App logs are not printed: this repo's Actions logs are public.
+          echo "deploy failed: image=${running:-none} health=${health:-none}"
+          exit 1
+          REMOTE
+
+      - name: Move latest to the verified image
+        if: github.event_name == 'push'
+        run: gcloud artifacts docker tags add "${IMAGE_REPO}:${TARGET_SHA}" "${IMAGE_REPO}:latest"
