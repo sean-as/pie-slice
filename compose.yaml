@@ -1,0 +1,28 @@
+services:
+  app:
+    image: ${IMAGE_REPO:?set IMAGE_REPO, e.g. us-central1-docker.pkg.dev/PROJECT/REPO/pie-slice}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/pieslice.db
+      DOCS_ENABLED: ${DOCS_ENABLED:-false}
+      TOKEN_TTL_DAYS: ${TOKEN_TTL_DAYS:-90}
+      SEED_DEMO: "false"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -233,6 +233,9 @@ Tailscale. SQLite on a persistent disk (single process, two users).
   `./data:/data`, `DATABASE_URL=sqlite:////data/pieslice.db`, `restart:
   unless-stopped`, healthcheck on `/api/health`, bound to `127.0.0.1:8000`.
 - `.env.example` and a `.dockerignore`.
+- The container runs as uid 1000, so the startup script must `install -d -o 1000
+  -g 1000 /opt/pie-slice/data` after mounting the data disk (a bind mount hides
+  the image's own `chown`).
 
 **2. Infrastructure (Terraform, `infra/`)**
 
