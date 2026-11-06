@@ -379,3 +379,78 @@ ul.list {
   font-weight: 600;
   text-decoration: none;
 }
+
+/* Spending by category */
+.month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.spend-total {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+.spend-total-amount {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.spend-row {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.spend-summary {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+}
+
+.spend-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.spend-bar {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: #eee;
+  overflow: hidden;
+}
+
+.spend-bar-fill {
+  display: block;
+  height: 100%;
+  background: #4f46e5;
+}
+
+.spend-members {
+  width: calc(100% - 2rem);
+  margin: 0 1rem 0.75rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.spend-members th,
+.spend-members td {
+  text-align: right;
+  padding: 0.25rem 0;
+}
+
+.spend-members th:first-child,
+.spend-members td:first-child {
+  text-align: left;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categoryByMonth, UNCATEGORISED } from "./categoryMonths";
+import { categoryByMonth, previousMonth, UNCATEGORISED } from "./categoryMonths";
 import type { Expense } from "./types";
 
 function exp(date: string, amountCents: number, category: string | null, payerId = "a", splits = [
@@ -60,5 +60,12 @@ describe("categoryByMonth", () => {
 
   it("returns nothing for no expenses", () => {
     expect(categoryByMonth([])).toEqual([]);
+  });
+});
+
+describe("previousMonth", () => {
+  it("steps back one calendar month, across year boundaries", () => {
+    expect(previousMonth("2026-08")).toBe("2026-07");
+    expect(previousMonth("2026-01")).toBe("2025-12");
   });
 });

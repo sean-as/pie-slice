@@ -67,3 +67,9 @@ export function categoryByMonth(expenses: Expense[]): MonthBreakdown[] {
       return { month, totalCents: categories.reduce((sum, c) => sum + c.totalCents, 0), categories };
     });
 }
+
+/** The calendar month before `month` ("2026-01" → "2025-12"). */
+export function previousMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}

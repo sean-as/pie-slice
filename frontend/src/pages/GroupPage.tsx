@@ -80,6 +80,8 @@ export function GroupPage() {
         <Link to={`/group/${group.id}/members`}>
           {memberCount} member{memberCount === 1 ? "" : "s"}
         </Link>
+        {" · "}
+        <Link to={`/group/${group.id}/spending`}>Spending by category</Link>
       </p>
 
       {balances && (

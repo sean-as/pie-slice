@@ -95,7 +95,9 @@ created until they confirm on this window.
   test harness exists in the frontend (tests are domain-only), so this was
   verified by build/lint rather than automated tests.
 
-## TODO: balances by category per month — redo with better UX
+## Balances by category per month — redone (implemented)
+
+Redone as its own page, `/group/:groupId/spending` (`SpendingPage.tsx`), linked from the group header: month arrows, big month total with a "more/less than last month" line, one tappable row per category with a share bar and %, expanding to per-member paid/owes. Still client-side via `categoryByMonth`; tabular+bars, no chart lib. Not clicked through in a browser. Original plan below.
 
 A group view showing spending broken down by category for each month, so
 users can see where the money goes rather than only who owes whom.

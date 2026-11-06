@@ -5,6 +5,7 @@ import { SignupPage } from "./pages/SignupPage";
 import { LoginPage } from "./pages/LoginPage";
 import { AddExpensePage } from "./pages/AddExpensePage";
 import { MembersPage } from "./pages/MembersPage";
+import { SpendingPage } from "./pages/SpendingPage";
 import { GroupPage } from "./pages/GroupPage";
 import { useCurrentUser } from "./hooks/useCurrentUser";
 import { expenseService } from "./services";
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/group/:groupId" element={<GroupPage />} />
           <Route path="/group/:groupId/add" element={<AddExpensePage />} />
+          <Route path="/group/:groupId/spending" element={<SpendingPage />} />
           <Route path="/group/:groupId/members" element={<MembersPage />} />
         </Routes>
       </main>
