@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, Request, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -66,6 +66,8 @@ app.add_middleware(
 
 logger = logging.getLogger("pieslice")
 
+_BACKEND_PATHS = {"docs", "docs/oauth2-redirect", "redoc", "openapi.json"}
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
@@ -102,19 +104,29 @@ api.include_router(balances.router)
 api.include_router(imports.router)
 app.include_router(api)
 
-# If a built frontend is present (the container image puts it at STATIC_DIR),
-# serve it from the same origin as the API, falling back to index.html so
-# client-side routes survive a refresh.
+def mount_frontend(target: FastAPI, static: Path) -> None:
+    """
+    Serves a built frontend from the same origin as the API, falling back to
+    index.html so client-side routes survive a refresh. Backend paths are
+    excluded from that fallback: a missing API route must stay a 404, not a
+    200 of HTML, and disabled docs must actually be gone.
+    """
+    target.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
+
+    @target.get("/{path:path}", include_in_schema=False)
+    def spa(path: str) -> FileResponse:
+        if path == "api" or path.startswith("api/") or path in _BACKEND_PATHS:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+        candidate = (static / path).resolve()
+        if path and candidate.is_file() and static.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(static / "index.html")
+
+
+# The container image puts the build at STATIC_DIR.
 _static = Path(os.environ.get("STATIC_DIR", "static"))
 if _static.is_dir():
-    app.mount("/assets", StaticFiles(directory=_static / "assets"), name="assets")
-
-    @app.get("/{path:path}", include_in_schema=False)
-    def spa(path: str) -> FileResponse:
-        candidate = (_static / path).resolve()
-        if path and candidate.is_file() and _static.resolve() in candidate.parents:
-            return FileResponse(candidate)
-        return FileResponse(_static / "index.html")
+    mount_frontend(app, _static)
 
 
 # Demo data (alice/bob, password123) is opt-in: SEED_DEMO=true for local dev.
