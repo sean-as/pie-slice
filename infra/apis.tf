@@ -1,0 +1,27 @@
+locals {
+  apis = [
+    "billingbudgets.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "compute.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "iap.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "oslogin.googleapis.com",
+    "secretmanager.googleapis.com",
+    "storage.googleapis.com",
+    "sts.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "apis" {
+  for_each = toset(local.apis)
+
+  service            = each.value
+  disable_on_destroy = false
+}
+
+data "google_project" "this" {
+  project_id = var.project_id
+}

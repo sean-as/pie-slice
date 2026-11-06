@@ -272,8 +272,8 @@ infra/
 *Resources:*
 - **Network:** custom VPC and subnet with Private Google Access. Firewall
   allows only the IAP range `35.235.240.0/20` on 22; nothing else inbound.
-  Open decision: Cloud NAT vs an ephemeral IP for outbound traffic. Both are
-  billed, so price them before the first apply.
+  Decided: Cloud NAT, no external IP (about $1/month plus data; an ephemeral
+  IPv4 is billed too and would expose the VM).
 - **VM:** `e2-micro`, Debian 12, in a free-tier region (us-west1, us-central1
   or us-east1), OS Login on. 30 GB standard disk in total, split into a boot
   disk and a **separate data disk** mounted at `/opt/pie-slice/data`, so

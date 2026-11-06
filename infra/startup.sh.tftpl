@@ -1,0 +1,99 @@
+#!/bin/bash
+# Runs as root on every boot, so every step must be idempotent.
+# Rendered by Terraform; shell variables use $NAME (no braces) to avoid
+# clashing with template interpolation.
+set -euo pipefail
+exec > >(tee -a /var/log/pie-slice-startup.log) 2>&1
+echo "== startup $(date -Is)"
+
+export DEBIAN_FRONTEND=noninteractive
+# First boot often races Debian's scheduled apt jobs for the dpkg lock.
+APT="apt-get -o DPkg::Lock::Timeout=600 -y"
+APP_DIR=/opt/pie-slice
+DATA_DIR=$APP_DIR/data
+DATA_DEV=/dev/disk/by-id/google-${data_device_name}
+
+# ---- swap (1 GB RAM is tight for image pulls) ----
+if ! swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
+  [ -f /swapfile ] || fallocate -l 1G /swapfile
+  chmod 600 /swapfile
+  # A run interrupted before mkswap leaves an unformatted file; format and retry.
+  swapon /swapfile 2>/dev/null || { mkswap -f /swapfile; swapon /swapfile; }
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# ---- packages: Docker + Compose plugin, Tailscale, sqlite3 (backups) ----
+if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
+  $APT update
+  $APT install ca-certificates curl gnupg
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  $APT update
+  $APT install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+fi
+
+if ! command -v tailscale >/dev/null; then
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list
+  $APT update
+  $APT install tailscale
+fi
+
+command -v sqlite3 >/dev/null || { $APT update; $APT install sqlite3; }
+
+systemctl enable --now docker tailscaled
+
+# ---- data disk at /opt/pie-slice/data (survives VM replacement) ----
+mkdir -p "$DATA_DIR"
+for _ in $(seq 1 30); do [ -b "$DATA_DEV" ] && break; sleep 2; done
+[ -b "$DATA_DEV" ] || { echo "FATAL: data disk $DATA_DEV not found; refusing to continue"; exit 1; }
+# Format only when lsblk positively reports no filesystem. Never use -F.
+if [ -z "$(lsblk -no FSTYPE "$DATA_DEV")" ]; then
+  mkfs.ext4 -m 0 "$DATA_DEV"
+fi
+UUID=$(blkid -s UUID -o value "$DATA_DEV")
+grep -q "$UUID" /etc/fstab || echo "UUID=$UUID $DATA_DIR ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q "$DATA_DIR" || mount "$DATA_DIR"
+mountpoint -q "$DATA_DIR" || { echo "FATAL: $DATA_DIR not mounted"; exit 1; }
+# nofail lets the VM boot without the disk, but then Docker would restart the
+# container on the empty boot-disk folder and create a fresh database. Make
+# Docker wait for the mount instead.
+install -d /etc/systemd/system/docker.service.d
+printf '[Unit]\nRequiresMountsFor=%s\n' "$DATA_DIR" > /etc/systemd/system/docker.service.d/data.conf
+systemctl daemon-reload
+# The container runs as uid 1000; a bind mount hides the image's own chown.
+install -d -o 1000 -g 1000 "$DATA_DIR"
+
+# ---- Artifact Registry credentials for root (deploys run docker via sudo) ----
+HOME=/root gcloud auth configure-docker ${registry_host} --quiet
+
+# ---- compose environment (compose.yaml is copied here by the deploy job) ----
+# This script owns the IMAGE_REPO line only; other lines (future secrets
+# written by the deploy step) are left alone.
+touch "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"
+if grep -q '^IMAGE_REPO=' "$APP_DIR/.env"; then
+  sed -i 's|^IMAGE_REPO=.*|IMAGE_REPO=${image_repo}|' "$APP_DIR/.env"
+else
+  echo "IMAGE_REPO=${image_repo}" >> "$APP_DIR/.env"
+fi
+
+# ---- Tailscale ----
+ts_state() { tailscale status --json 2>/dev/null | grep -o '"BackendState": *"[A-Za-z]*"' | cut -d'"' -f4 || true; }
+for _ in $(seq 1 30); do [ -n "$(ts_state)" ] && break; sleep 2; done
+if [ "$(ts_state)" != "Running" ]; then
+  if KEY=$(gcloud secrets versions access latest --secret=${tailscale_secret} --project=${project_id}); then
+    KEYFILE=$(umask 077; mktemp)
+    printf '%s' "$KEY" > "$KEYFILE"; unset KEY
+    tailscale up --auth-key="file:$KEYFILE" --hostname=${hostname}%{ if tailscale_tag != "" } --advertise-tags=${tailscale_tag}%{ endif }
+    rm -f "$KEYFILE"
+  else
+    echo "WARN: could not read secret ${tailscale_secret} (no version yet, or a permission error above)."
+    echo "Add a version, then run: sudo google_metadata_script_runner startup"
+  fi
+fi
+if [ "$(ts_state)" = "Running" ]; then
+  tailscale serve --bg 8000
+fi
+
+echo "== startup done"

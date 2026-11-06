@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+project_id           = "your-project-id"
+github_repository_id = "123456789" # gh api repos/OWNER/REPO --jq .id
+billing_account_id   = "XXXXXX-XXXXXX-XXXXXX"
+
+# region = "us-central1"
+# zone   = "us-central1-a"
+# budget_usd = 10

@@ -1,0 +1,3 @@
+# Copy to backend.hcl (gitignored).
+bucket = "your-project-id-tfstate"
+prefix = "pie-slice"
