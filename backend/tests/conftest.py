@@ -20,6 +20,10 @@ def default_cookie_settings(monkeypatch):
     """A developer's .env (COOKIE_SECURE=false) must not change what the tests exercise."""
     monkeypatch.setenv("COOKIE_SECURE", "true")
     monkeypatch.delenv("SIGNUP_CODE", raising=False)  # signup is open unless a test sets it
+    from app.ratelimit import login_email_limiter, login_ip_limiter, signup_limiter
+
+    for limiter in (login_ip_limiter, login_email_limiter, signup_limiter):
+        limiter.clear()
 
 
 def session_token(response) -> str:

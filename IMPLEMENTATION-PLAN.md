@@ -390,8 +390,17 @@ Standalone public repo for portfolio use, so nothing committed may be
 sensitive. The tree and history were scanned for secrets and real transaction
 data before the move.
 
+### Abuse protection (done)
+Login: 10 failed attempts per 15 min per source address, 50 per email (loose, so
+one address cannot lock a member out). Signup: 10 wrong invite codes per 15 min
+per address. In-memory, single worker. The address is the last
+`X-Forwarded-For` entry (IPv6 keyed by /64); with no such header the per-IP
+limit is skipped and a warning is logged. **Verify after enabling Funnel** that
+the header is present. Every response carries `X-Robots-Tag: noindex`;
+`robots.txt` disallows all.
+
 ### Deferred (not needed while private)
-Login/signup rate limiting, Sentry, public HTTPS/Caddy, Postgres. Revisit
+Sentry, public HTTPS/Caddy, Postgres. Revisit
 before any public exposure. Signup is still open to anyone on the tailnet; add
 an invite code or disable signup once the founding users have accounts.
 

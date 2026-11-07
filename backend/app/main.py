@@ -42,6 +42,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
+_NOINDEX = "noindex, nofollow, noarchive"
+
+
+@app.middleware("http")
+async def no_indexing(request: Request, call_next):
+    """Private app: ask well-behaved crawlers not to index or archive any response."""
+    response = await call_next(request)
+    response.headers["X-Robots-Tag"] = _NOINDEX
+    return response
+
+
 logger = logging.getLogger("pieslice")
 
 _BACKEND_PATHS = {"docs", "docs/oauth2-redirect", "redoc", "openapi.json"}
@@ -63,6 +76,7 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Something went wrong on our end. Please try again."},
+        headers={"X-Robots-Tag": _NOINDEX},  # this handler runs outside the middleware
     )
 
 
