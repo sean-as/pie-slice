@@ -14,6 +14,8 @@ export type SignupInput = {
   email: string;
   password: string;
   displayName: string;
+  /** Needed only when the server requires one. */
+  inviteCode?: string;
 };
 
 export type LoginInput = {

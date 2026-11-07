@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.auth import (
@@ -19,6 +22,19 @@ from app.store import StoredUser, store
 router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(require_same_site)])
 
 
+def _check_invite_code(supplied: str | None) -> None:
+    """
+    When SIGNUP_CODE is set, signup needs it; unset (dev, tests) leaves signup
+    open. Checked before the duplicate-email lookup so an outsider cannot use
+    the 409 to find out which emails have accounts.
+    """
+    required = os.environ.get("SIGNUP_CODE", "").strip()
+    if not required:
+        return
+    if not secrets.compare_digest((supplied or "").strip().encode(), required.encode()):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid invite code.")
+
+
 def _end_existing_session(request: Request) -> None:
     """Logging in or signing up replaces whatever session the browser already had."""
     existing = optional_session_token(request, None)
@@ -28,6 +44,7 @@ def _end_existing_session(request: Request) -> None:
 
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def signup(body: SignupInput, request: Request, response: Response) -> AuthResponse:
+    _check_invite_code(body.invite_code)
     if store.find_user_by_email(body.email) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="An account with that email already exists."

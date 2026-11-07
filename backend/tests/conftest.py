@@ -19,6 +19,7 @@ from app.store import store
 def default_cookie_settings(monkeypatch):
     """A developer's .env (COOKIE_SECURE=false) must not change what the tests exercise."""
     monkeypatch.setenv("COOKIE_SECURE", "true")
+    monkeypatch.delenv("SIGNUP_CODE", raising=False)  # signup is open unless a test sets it
 
 
 def session_token(response) -> str:

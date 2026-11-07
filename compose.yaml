@@ -16,6 +16,7 @@ services:
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       TOKEN_TTL_DAYS: ${TOKEN_TTL_DAYS:-90}
       SEED_DEMO: "false"
+      SIGNUP_CODE: ${SIGNUP_CODE:?set SIGNUP_CODE in .env (the deploy fills it from Secret Manager); empty would leave signup open}
       CORS_ORIGINS: "" # same-origin deployment: allow no cross-origin callers
     healthcheck:
       test:

@@ -83,3 +83,64 @@ class TestLogoutAndMe:
     def test_bogus_token_is_rejected(self, client):
         response = client.get("/api/auth/me", headers={"Authorization": "Bearer not-a-real-token"})
         assert response.status_code == 401
+
+
+class TestInviteCode:
+    BODY = {"email": "alice@example.com", "displayName": "Alice", "password": "password123"}
+
+    def test_signup_is_open_when_no_code_is_configured(self, client):
+        assert client.post("/api/auth/signup", json=self.BODY).status_code == 201
+
+    def test_missing_code_is_rejected_when_one_is_configured(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/signup", json=self.BODY)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Invalid invite code."
+
+    def test_wrong_code_is_rejected(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/signup", json={**self.BODY, "inviteCode": "nope"})
+        assert response.status_code == 403
+
+    def test_correct_code_creates_the_account(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/signup", json={**self.BODY, "inviteCode": "s3cret-code"})
+        assert response.status_code == 201
+
+    def test_surrounding_whitespace_in_the_pasted_code_is_tolerated(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/signup", json={**self.BODY, "inviteCode": "  s3cret-code\n"})
+        assert response.status_code == 201
+
+    def test_code_is_checked_before_revealing_whether_an_email_exists(self, client, signup, monkeypatch):
+        signup(email="alice@example.com")  # created while signup was still open
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/signup", json=self.BODY)  # no code
+        assert response.status_code == 403  # not 409
+
+    def test_login_does_not_need_the_code(self, client, signup, monkeypatch):
+        signup(email="alice@example.com", password="password123")
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        response = client.post("/api/auth/login", json={"email": "alice@example.com", "password": "password123"})
+        assert response.status_code == 200
+
+    def test_blank_code_on_the_form_is_rejected_when_one_is_configured(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        for blank in ("", "   "):
+            assert client.post("/api/auth/signup", json={**self.BODY, "inviteCode": blank}).status_code == 403
+
+    def test_code_is_case_sensitive(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        assert client.post("/api/auth/signup", json={**self.BODY, "inviteCode": "S3CRET-CODE"}).status_code == 403
+
+    def test_a_blank_server_setting_means_open_signup(self, client, monkeypatch):
+        # Documented fail-open: compose.yaml refuses to start without a value,
+        # so production cannot get here by accident.
+        for blank in ("", "   "):
+            monkeypatch.setenv("SIGNUP_CODE", blank)
+            email = f"u{len(blank)}@example.com"
+            assert client.post("/api/auth/signup", json={**self.BODY, "email": email}).status_code == 201
+
+    def test_overlong_code_is_rejected_by_validation(self, client, monkeypatch):
+        monkeypatch.setenv("SIGNUP_CODE", "s3cret-code")
+        assert client.post("/api/auth/signup", json={**self.BODY, "inviteCode": "x" * 1000}).status_code == 422

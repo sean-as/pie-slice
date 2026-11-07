@@ -7,6 +7,7 @@ export function SignupPage() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -15,7 +16,7 @@ export function SignupPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await expenseService.signup({ email, displayName, password });
+      await expenseService.signup({ email, displayName, password, inviteCode: inviteCode.trim() || undefined });
       navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign up.");
@@ -48,6 +49,16 @@ export function SignupPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="signup-invite-code">Invite code</label>
+          <input
+            id="signup-invite-code"
+            type="text"
+            autoComplete="off"
+            value={inviteCode}
+            onChange={(e) => setInviteCode(e.target.value)}
           />
         </div>
         {error && <p className="error">{error}</p>}

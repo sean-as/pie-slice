@@ -331,6 +331,8 @@ infra/
 | Value | Where | Why |
 |---|---|---|
 | Tailscale auth key (tagged, so node key expiry is off) | Secret Manager: `tailscale-auth-key` | Credential; read by the VM at boot |
+| Signup invite code (`SIGNUP_CODE`) | Secret Manager: `signup-code`; the deploy step copies it into the root-only `/opt/pie-slice/.env`, and the deploy fails if it is missing | Gates account creation. Generate: `openssl rand -hex 16`; add: `printf '%s' "$CODE" \| gcloud secrets versions add signup-code --data-file=-` |
+| *(rotating the code: add a new secret version, then run the deploy workflow on the current SHA; existing accounts and sessions are unaffected)* | | |
 | Heartbeat ping URL (phase 2) | Secret Manager: `heartbeat-url` | Anyone holding it can fake a healthy ping |
 | Future app secrets | Secret Manager, written to a root-only `/opt/pie-slice/.env` by the deploy step | Credentials. None exist today |
 | `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `VM_NAME`, `VM_ZONE`, `AR_REPOSITORY` | GitHub Actions variables, copied from Terraform outputs | Needed to log in to GCP, so they can't come from Secret Manager; identifiers, not credentials |

@@ -53,6 +53,12 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
 
+      - name: Refuse rollback targets that predate the signup invite code
+        # Older commits ignore SIGNUP_CODE, so rolling back to one would leave
+        # signup open to anyone.
+        if: github.event_name == 'workflow_dispatch'
+        run: grep -q SIGNUP_CODE backend/app/routers/auth.py compose.yaml
+
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
@@ -90,7 +96,29 @@ jobs:
           sudo install -m 0644 /tmp/compose.yaml compose.yaml
           rm -f /tmp/compose.yaml
 
-          # Safety net first: consistent snapshot of the live DB (skipped on the first deploy).
+          # Write KEY=VALUE into .env without the value ever appearing in a
+          # command line (sudo logs those and `ps` shows them): printf is a
+          # shell builtin and the value travels over a pipe.
+          set_env() {
+            { sudo grep -v "^$1=" .env || true; printf '%s=%s\n' "$1" "$2"; } \
+              | sudo sh -c 'umask 077; cat > .env.new'
+            sudo install -m 600 .env.new .env
+            sudo rm -f .env.new
+          }
+          sudo touch .env && sudo chmod 600 .env
+
+          # Fail closed, and before anything is changed: with no invite code the
+          # site would let anyone sign up.
+          err=$(mktemp)
+          code=$(sudo gcloud secrets versions access latest --secret=signup-code </dev/null 2>"$err") || {
+            echo "could not read secret signup-code (add a value / run terraform apply?):"
+            tail -n 3 "$err"
+            exit 1
+          }
+          rm -f "$err"
+          [[ "$code" =~ ^[A-Za-z0-9_-]{32,}$ ]] || { echo "signup-code must be 32+ characters of A-Z a-z 0-9 _ - (openssl rand -hex 16)"; exit 1; }
+
+          # Safety net: consistent snapshot of the live DB (skipped on the first deploy).
           # Run as the app's uid so any -wal/-shm files stay owned by it.
           if [ -f data/pieslice.db ]; then
             sudo -u '#1000' sqlite3 data/pieslice.db ".backup /tmp/pre-deploy.db" </dev/null
@@ -100,16 +128,10 @@ jobs:
 
           # Persist the target in .env so a manual `docker compose up` later
           # cannot silently fall back to another tag.
-          set_env() {
-            if sudo grep -q "^$1=" .env; then
-              sudo sed -i "s|^$1=.*|$1=$2|" .env
-            else
-              echo "$1=$2" | sudo tee -a .env > /dev/null
-            fi
-          }
-          sudo touch .env && sudo chmod 600 .env
           set_env IMAGE_REPO "$IMAGE_REPO"
           set_env IMAGE_TAG "$SHA"
+          set_env SIGNUP_CODE "$code"
+          unset code
 
           sudo docker compose pull </dev/null
           sudo docker compose up -d </dev/null

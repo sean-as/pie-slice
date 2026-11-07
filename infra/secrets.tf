@@ -4,6 +4,7 @@
 locals {
   secrets = toset([
     "tailscale-auth-key",
+    "signup-code",   # invite code required to create an account
     "heartbeat-url", # phase 2 monitoring
   ])
 }

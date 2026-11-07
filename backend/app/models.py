@@ -29,6 +29,8 @@ class SignupInput(ApiModel):
     email: EmailStr
     password: str = Field(min_length=8)
     display_name: str = Field(min_length=1, alias="displayName")
+    # Required only when the server has SIGNUP_CODE set; ignored otherwise.
+    invite_code: str | None = Field(default=None, max_length=256, alias="inviteCode")
 
 
 class LoginInput(ApiModel):

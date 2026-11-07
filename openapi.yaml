@@ -63,7 +63,7 @@ paths:
       tags: [auth]
       operationId: signup
       summary: Create an account
-      description: Maps to `ExpenseServiceApi.signup`. Unauthenticated. Returns a bearer token for immediate use.
+      description: Maps to `ExpenseServiceApi.signup`. Unauthenticated. Logs the new user in (session cookie). When the server has `SIGNUP_CODE` set, `inviteCode` must match it, otherwise `403`; the code is checked before the duplicate-email check.
       security: []
       requestBody:
         required: true
@@ -78,6 +78,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
+        "403":
+          description: Missing or wrong invite code (only when the server requires one).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: An account with that email already exists.
           content:
@@ -982,6 +988,9 @@ components:
         displayName:
           type: string
           minLength: 1
+        inviteCode:
+          type: string
+          description: Required only when the server is configured with `SIGNUP_CODE`.
 
     LoginInput:
       type: object
