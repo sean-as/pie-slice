@@ -345,7 +345,7 @@ Gitignore `*.tfvars`, `*.tfstate*`, `.terraform/` and `backend.hcl`; commit the
 `gcloud secrets versions add <name> --data-file=-`.
 
 **4. Data safety**
-- The DB runs in WAL mode: back up only with `sqlite3 .backup` (run as uid 1000)
+- The DB runs in WAL mode: back up only with `sqlite3 .backup` (run as uid 1000 with `setpriv`; the VM has no passwd entry for it)
   or Litestream, never `cp`/`gsutil cp` of the `.db` file, which would miss
   committed data still in `-wal`.
 - Nightly: `sqlite3 .backup` to a temp file, then upload to a private GCS

@@ -93,9 +93,6 @@ jobs:
             "BUCKET=${GCP_PROJECT_ID}-pie-slice-backups IMAGE_REPO=${IMAGE_REPO} SHA=${TARGET_SHA} bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/pie-slice
-          sudo install -m 0644 /tmp/compose.yaml compose.yaml
-          rm -f /tmp/compose.yaml
-
           # Write KEY=VALUE into .env without the value ever appearing in a
           # command line (sudo logs those and `ps` shows them): printf is a
           # shell builtin and the value travels over a pipe.
@@ -119,12 +116,17 @@ jobs:
           [[ "$code" =~ ^[A-Za-z0-9_-]{32,}$ ]] || { echo "signup-code must be 32+ characters of A-Z a-z 0-9 _ - (openssl rand -hex 16)"; exit 1; }
 
           # Safety net: consistent snapshot of the live DB (skipped on the first deploy).
-          # Run as the app's uid so any -wal/-shm files stay owned by it.
+          # Run as the app's uid so any -wal/-shm files stay owned by it. setpriv, not
+          # `sudo -u '#1000'`: the VM has no passwd entry for uid 1000.
           if [ -f data/pieslice.db ]; then
-            sudo -u '#1000' sqlite3 data/pieslice.db ".backup /tmp/pre-deploy.db" </dev/null
+            sudo setpriv --reuid=1000 --regid=1000 --clear-groups sqlite3 data/pieslice.db ".backup /tmp/pre-deploy.db" </dev/null
             sudo gcloud storage cp /tmp/pre-deploy.db "gs://${BUCKET}/pre-deploy/$(date -u +%Y%m%dT%H%M%SZ)-${SHA}.db" </dev/null
             sudo rm -f /tmp/pre-deploy.db
           fi
+
+          # Everything that can fail has passed; now change the VM.
+          sudo install -m 0644 /tmp/compose.yaml compose.yaml
+          rm -f /tmp/compose.yaml
 
           # Persist the target in .env so a manual `docker compose up` later
           # cannot silently fall back to another tag.
