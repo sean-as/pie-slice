@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 class TestSignup:
-    def test_creates_account_and_returns_token(self, client):
+    def test_creates_account_and_sets_the_session_cookie(self, client):
         response = client.post(
             "/api/auth/signup",
             json={"email": "alice@example.com", "displayName": "Alice", "password": "password123"},
@@ -14,7 +14,8 @@ class TestSignup:
         assert "id" in body["user"]
         assert "password" not in body["user"]
         assert "passwordHash" not in body["user"]
-        assert isinstance(body["token"], str) and len(body["token"]) > 10
+        assert "token" not in body  # the token is only ever in the HttpOnly cookie
+        assert "pie_session=" in response.headers["set-cookie"]
 
     def test_rejects_duplicate_email(self, client, signup):
         signup(email="alice@example.com")
@@ -37,7 +38,8 @@ class TestLogin:
         signup(email="alice@example.com", password="password123")
         response = client.post("/api/auth/login", json={"email": "alice@example.com", "password": "password123"})
         assert response.status_code == 200
-        assert "token" in response.json()
+        assert "token" not in response.json()
+        assert "pie_session=" in response.headers["set-cookie"]
 
     def test_rejects_wrong_password(self, client, signup):
         signup(email="alice@example.com", password="password123")

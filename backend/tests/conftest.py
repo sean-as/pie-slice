@@ -16,6 +16,21 @@ from app.store import store
 
 
 @pytest.fixture(autouse=True)
+def default_cookie_settings(monkeypatch):
+    """A developer's .env (COOKIE_SECURE=false) must not change what the tests exercise."""
+    monkeypatch.setenv("COOKIE_SECURE", "true")
+
+
+def session_token(response) -> str:
+    """The session token a tool would take from a login/signup response's Set-Cookie."""
+    from http.cookies import SimpleCookie
+
+    jar = SimpleCookie()
+    jar.load(response.headers["set-cookie"])
+    return jar["pie_session"].value
+
+
+@pytest.fixture(autouse=True)
 def reset_store():
     """
     app.main.seed() runs once at import time; each test gets a clean slate
@@ -42,9 +57,8 @@ def signup(client: TestClient) -> Callable[..., tuple[dict[str, str], dict]]:
             json={"email": email, "displayName": display_name, "password": password},
         )
         assert response.status_code == 201, response.text
-        body = response.json()
-        headers = {"Authorization": f"Bearer {body['token']}"}
-        return headers, body["user"]
+        headers = {"Authorization": f"Bearer {session_token(response)}"}
+        return headers, response.json()["user"]
 
     return _signup
 

@@ -16,6 +16,7 @@ services:
       DOCS_ENABLED: ${DOCS_ENABLED:-false}
       TOKEN_TTL_DAYS: ${TOKEN_TTL_DAYS:-90}
       SEED_DEMO: "false"
+      CORS_ORIGINS: "" # same-origin deployment: allow no cross-origin callers
     healthcheck:
       test:
         - CMD

@@ -49,12 +49,16 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def token_ttl() -> timedelta:
+    """Tokens (and the session cookie carrying them) last TOKEN_TTL_DAYS, default 90."""
+    return timedelta(days=float(os.environ.get("TOKEN_TTL_DAYS", "90")))
+
+
 def _token_expired(created_at: datetime | None) -> bool:
-    """Tokens last TOKEN_TTL_DAYS (default 90). No timestamp (pre-expiry row) = expired."""
+    """No timestamp (pre-expiry row) = expired."""
     if created_at is None:
         return True
-    ttl = timedelta(days=float(os.environ.get("TOKEN_TTL_DAYS", "90")))
-    return _utcnow() - created_at > ttl
+    return _utcnow() - created_at > token_ttl()
 
 
 @dataclass

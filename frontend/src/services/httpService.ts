@@ -21,15 +21,18 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api";
-const TOKEN_KEY = "pie-slice:token";
 
-function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+/**
+ * The session lives in an HttpOnly cookie the browser manages; page scripts
+ * never see the token. Earlier versions kept it in localStorage, so drop any
+ * leftover copy.
+ */
+function dropLegacyToken(): void {
+  try {
+    localStorage.removeItem("pie-slice:token");
+  } catch {
+    // no localStorage (private mode, tests): nothing to clean up
+  }
 }
 
 export class ApiError extends Error {
@@ -42,7 +45,6 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     // A FormData body must set its own Content-Type: the browser adds the
     // multipart boundary, which we can't know here — forcing JSON would
@@ -50,9 +52,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers as Record<string, string> | undefined),
   };
-  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  // "include" sends the session cookie on the cross-origin dev setup too
+  // (Vite on :5173, API on :8000); in production the API is same-origin.
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "include" });
 
   if (response.status === 204) {
     return undefined as T;
@@ -69,7 +72,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-type AuthResponse = { user: User; token: string };
+type AuthResponse = { user: User }; // the session is the HttpOnly cookie, never in the body
 
 /**
  * Talks to the FastAPI backend (../../backend) over HTTP, implementing the
@@ -80,41 +83,32 @@ type AuthResponse = { user: User; token: string };
  */
 export class HttpExpenseService implements ExpenseServiceApi {
   async signup(input: SignupInput): Promise<User> {
-    const { user, token } = await request<AuthResponse>("/auth/signup", {
+    const { user } = await request<AuthResponse>("/auth/signup", {
       method: "POST",
       body: JSON.stringify(input),
     });
-    setToken(token);
     return user;
   }
 
   async login(input: LoginInput): Promise<User> {
-    const { user, token } = await request<AuthResponse>("/auth/login", {
+    const { user } = await request<AuthResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify(input),
     });
-    setToken(token);
     return user;
   }
 
   async logout(): Promise<void> {
-    try {
-      await request<void>("/auth/logout", { method: "POST" });
-    } finally {
-      setToken(null);
-    }
+    await request<void>("/auth/logout", { method: "POST" });
   }
 
   async getCurrentUser(): Promise<User | null> {
-    if (!getToken()) {
-      return null;
-    }
+    dropLegacyToken();
     try {
       return await request<User>("/auth/me");
     } catch {
-      // Covers an expired/invalid token (401) and any other failure — this
-      // is a "can I confirm you're logged in" check, not meant to throw.
-      setToken(null);
+      // Covers no/expired session (401) and any other failure — this is a
+      // "can I confirm you're logged in" check, not meant to throw.
       return null;
     }
   }

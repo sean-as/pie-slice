@@ -57,7 +57,6 @@ const mapping: ColumnMapping = {
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", stubStorage());
-  localStorage.setItem("pie-slice:token", "test-token");
   fetchMock = vi.fn().mockResolvedValue(jsonResponse({ importId: "i1", rows: [], skipped: [], duplicateCount: 0 }));
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -106,10 +105,11 @@ describe("uploadCsv", () => {
     expect((options.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
   });
 
-  it("sends the bearer token", () => {
+  it("authenticates with the session cookie, not an Authorization header", () => {
     service.uploadCsv("g1", file, mapping);
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect((options.headers as Record<string, string>).Authorization).toBe("Bearer test-token");
+    expect(options.credentials).toBe("include");
+    expect((options.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 });
 
@@ -136,5 +136,30 @@ describe("addExpense", () => {
   it("passes every other field through untouched", () => {
     service.addExpense("g1", base);
     expect(sentJson()).toMatchObject(base);
+  });
+});
+
+describe("session handling", () => {
+  it("never stores the token from login in localStorage", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ user: { id: "u1", email: "a@b.co", displayName: "A" }, token: "secret" }),
+    );
+    await service.login({ email: "a@b.co", password: "password123" });
+    expect(localStorage.getItem("pie-slice:token")).toBeNull();
+  });
+
+  it("removes a token left in localStorage by an earlier version", async () => {
+    localStorage.setItem("pie-slice:token", "stale");
+    fetchMock.mockResolvedValue({ ok: false, status: 401, text: () => Promise.resolve("{}") } as unknown as Response);
+    expect(await service.getCurrentUser()).toBeNull();
+    expect(localStorage.getItem("pie-slice:token")).toBeNull();
+  });
+
+  it("asks the server who it is even with no local token", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: "u1", email: "a@b.co", displayName: "A" }),
+    );
+    expect(await service.getCurrentUser()).toMatchObject({ id: "u1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

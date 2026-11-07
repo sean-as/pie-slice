@@ -11,10 +11,17 @@ info:
 
     ## Authentication
 
-    Real accounts: email + password, bearer tokens. `POST /auth/signup`
-    and `POST /auth/login` are the only unauthenticated endpoints; every
-    other endpoint requires `Authorization: Bearer <token>`, obtained from
-    either of those two.
+    Real accounts: email + password. `POST /auth/signup` and
+    `POST /auth/login` are the only unauthenticated endpoints; every other
+    endpoint requires a session from either of those two. Browsers get it as
+    an `HttpOnly; Secure; SameSite=Lax` cookie (`pie_session`) set by the
+    response and sent automatically. The token is never in a response body;
+    tests and tools read it from the `Set-Cookie` header and may send it back
+    as the cookie or as `Authorization: Bearer <token>`. (`COOKIE_SECURE=false`
+    drops the `Secure` attribute for plain-http local development only.) When both are present the header wins. Any state-changing
+    request authenticated by cookie, and the auth endpoints themselves, are
+    rejected with `403` if their `Origin` header is not this site (or a
+    configured CORS origin).
 
     Beyond "is this a valid token," authorization is enforced per
     product-spec.md:
@@ -31,6 +38,7 @@ servers:
   - url: /api
 
 security:
+  - cookieAuth: []
   - bearerAuth: []
 
 tags:
@@ -116,12 +124,11 @@ paths:
       tags: [auth]
       operationId: logout
       summary: Log out
-      description: Maps to `ExpenseServiceApi.logout`. Invalidates the bearer token used to call it.
+      description: Maps to `ExpenseServiceApi.logout`. Invalidates the session used to call it, if any, and always clears the cookie. Idempotent: `204` even when the session already expired.
+      security: []
       responses:
         "204":
           description: Logged out.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
 
   /auth/me:
     get:
@@ -843,6 +850,11 @@ components:
       type: http
       scheme: bearer
       description: Token returned by `POST /auth/signup` or `POST /auth/login`.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: pie_session
+      description: HttpOnly session cookie set by `POST /auth/signup` and `POST /auth/login`.
 
   parameters:
     GroupId:
@@ -983,13 +995,10 @@ components:
 
     AuthResponse:
       type: object
-      required: [user, token]
+      required: [user]
       properties:
         user:
           $ref: "#/components/schemas/User"
-        token:
-          type: string
-          description: "Opaque bearer token — pass as `Authorization: Bearer <token>` on every subsequent request."
 
     Member:
       description: >

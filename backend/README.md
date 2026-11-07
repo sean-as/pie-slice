@@ -68,5 +68,5 @@ never the file your dev server uses.
 | `app/db.py` | Engine/session setup — the only file that knows which database is configured |
 | `app/db_models.py` | SQLAlchemy ORM tables |
 | `app/store.py` | Data-access layer — converts ORM rows to the Pydantic schemas everything else uses; routers never touch SQLAlchemy directly |
-| `app/auth.py` | Password hashing (bcrypt), bearer tokens, the `get_current_user` / `require_group_membership` dependencies every protected route uses |
+| `app/auth.py` | Password hashing (bcrypt), HttpOnly session cookie (bearer header also accepted), the `get_current_user` / `require_group_membership` dependencies every protected route uses |
 | `app/routers/` | One file per resource (auth, groups, expenses, settlements, balances) |

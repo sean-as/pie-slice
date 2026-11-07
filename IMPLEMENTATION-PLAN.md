@@ -358,16 +358,20 @@ Gitignore `*.tfvars`, `*.tfstate*`, `.terraform/` and `backend.hcl`; commit the
 
 **6. Smoke test (manual, after first deploy)**
 Signup, create group, add expense, CSV import, settle up, spending page, over
-the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
+the tailnet URL (a successful POST also proves the `Origin`/`Host` check works
+behind `tailscale serve`); confirm `/docs` is 404 and the demo users don't exist.
 
 ### Before first deploy (decided)
 - ~~**Alembic** baseline of the current schema; replace `_add_missing_columns`
   with `alembic upgrade head` on container start; SQLite batch mode.~~ Done
   (`app/migrate.py`, `migrations/`; runs in-process at startup; pre-Alembic
   databases are stamped at the baseline).
-- **Auth token in an `HttpOnly; Secure; SameSite=Lax` cookie** instead of
+- ~~**Auth token in an `HttpOnly; Secure; SameSite=Lax` cookie** instead of
   `localStorage`; same-origin deployment keeps CSRF simple. Bearer header
-  still accepted for tests/tools. Existing sessions are invalidated.
+  still accepted for tests/tools. Existing sessions are invalidated.~~ Done
+  (`pie_session` cookie; cookie-authenticated writes also check `Origin`;
+  `COOKIE_SECURE=false` for plain-http local dev; the frontend drops the old
+  localStorage token).
 - ~~**SQLite WAL mode + busy timeout** in `db.py`~~ Done; Litestream is an option for
   continuous backup in place of the nightly job.
 

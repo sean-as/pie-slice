@@ -45,8 +45,9 @@ class User(ApiModel):
 
 
 class AuthResponse(ApiModel):
+    """The session token travels only in the HttpOnly cookie, never in the body."""
+
     user: User
-    token: str
 
 
 # ---------------------------------------------------------------------------

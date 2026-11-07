@@ -24,9 +24,13 @@ export default function App() {
   }, [location.pathname, refresh]);
 
   async function handleLogout() {
-    await expenseService.logout();
-    await refresh();
-    navigate("/");
+    try {
+      await expenseService.logout();
+    } finally {
+      // Even if the call failed, re-check who we are so the header never lies.
+      await refresh();
+      navigate("/");
+    }
   }
 
   return (
