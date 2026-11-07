@@ -343,6 +343,9 @@ Gitignore `*.tfvars`, `*.tfstate*`, `.terraform/` and `backend.hcl`; commit the
 `gcloud secrets versions add <name> --data-file=-`.
 
 **4. Data safety**
+- The DB runs in WAL mode: back up only with `sqlite3 .backup` (run as uid 1000)
+  or Litestream, never `cp`/`gsutil cp` of the `.db` file, which would miss
+  committed data still in `-wal`.
 - Nightly: `sqlite3 .backup` to a temp file, then upload to a private GCS
   bucket (7-day lifecycle) from a cron/systemd timer on the VM; or daily
   disk snapshot schedule as the cheap start. **Do a test restore before
@@ -358,12 +361,14 @@ Signup, create group, add expense, CSV import, settle up, spending page, over
 the tailnet URL; confirm `/docs` is 404 and the demo users don't exist.
 
 ### Before first deploy (decided)
-- **Alembic** baseline of the current schema; replace `_add_missing_columns`
-  with `alembic upgrade head` on container start; SQLite batch mode.
+- ~~**Alembic** baseline of the current schema; replace `_add_missing_columns`
+  with `alembic upgrade head` on container start; SQLite batch mode.~~ Done
+  (`app/migrate.py`, `migrations/`; runs in-process at startup; pre-Alembic
+  databases are stamped at the baseline).
 - **Auth token in an `HttpOnly; Secure; SameSite=Lax` cookie** instead of
   `localStorage`; same-origin deployment keeps CSRF simple. Bearer header
   still accepted for tests/tools. Existing sessions are invalidated.
-- **SQLite WAL mode + busy timeout** in `db.py`; Litestream is an option for
+- ~~**SQLite WAL mode + busy timeout** in `db.py`~~ Done; Litestream is an option for
   continuous backup in place of the nightly job.
 
 ### Phase 2: monitoring (after initial deployment)

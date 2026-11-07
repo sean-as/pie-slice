@@ -8,33 +8,14 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text
 
 from app import db_models  # noqa: F401  (registers tables on Base.metadata)
-from app.db import Base, engine
+from app.migrate import upgrade_to_head
 from app.routers import auth, balances, expenses, groups, imports, settlements
 from app.store import seed
 
-Base.metadata.create_all(bind=engine)
-
-
-def _add_missing_columns() -> None:
-    """
-    create_all never alters an existing table, so a database created before
-    groups had a description would 500 on every group query. There is no
-    migration tool here; add the one nullable column in place.
-    """
-    columns = {c["name"] for c in inspect(engine).get_columns("groups")}
-    if "description" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE groups ADD COLUMN description VARCHAR(1000)"))
-    token_columns = {c["name"] for c in inspect(engine).get_columns("tokens")}
-    if "created_at" not in token_columns:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE tokens ADD COLUMN created_at DATETIME"))
-
-
-_add_missing_columns()
+# Schema is managed by Alembic (migrations/); this is `alembic upgrade head`.
+upgrade_to_head()
 
 def _env_flag(name: str, default: bool = False) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")

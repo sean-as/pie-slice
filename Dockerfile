@@ -28,6 +28,7 @@ COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/app ./app
+COPY backend/migrations ./migrations
 COPY --from=frontend /build/dist ./static
 
 RUN useradd --system --uid 1000 --no-create-home app \
@@ -36,5 +37,6 @@ USER app
 VOLUME /data
 EXPOSE 8000
 
-# Single worker, no --reload: SQLite allows one writer process.
+# Single worker, no --reload: SQLite allows one writer process, and migrations
+# run at import time, so a second worker would race them.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -34,8 +34,17 @@ uv add psycopg2-binary
 DATABASE_URL=postgresql://user:password@localhost:5432/pieslice uv run uvicorn app.main:app
 ```
 
-Tables are created automatically on startup (`Base.metadata.create_all`) —
-no separate migration step for this prototype.
+The schema is managed by Alembic (`migrations/`). The app runs the equivalent
+of `alembic upgrade head` on startup, so there is no separate migration step.
+After changing `db_models.py`, generate a migration and review it:
+
+    uv run alembic revision --autogenerate -m "describe the change"
+
+A test fails if the migrations and the models drift apart. SQLite uses WAL mode
+with a 5 s busy timeout. Databases created before Alembic are adopted
+automatically (stamped at the baseline) on first start, so let the app do the
+first upgrade of an old database rather than the `alembic` CLI. The CLI is for
+generating revisions.
 
 ## Test
 
