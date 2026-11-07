@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${IMAGE_REPO:?set IMAGE_REPO, e.g. us-central1-docker.pkg.dev/PROJECT/REPO/pie-slice}:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REPO:?set IMAGE_REPO, e.g. us-central1-docker.pkg.dev/PROJECT/REPO/pie-slice}:${IMAGE_TAG:?set IMAGE_TAG (the deploy writes the commit SHA to .env)}
     restart: unless-stopped
     logging:
       driver: local

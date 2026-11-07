@@ -313,7 +313,8 @@ infra/
   lint, `npm run build`, Terraform fmt and validate.
 - `deploy.yml` on push to `main` after CI passes: auth to GCP with
   **Workload Identity Federation** (no long-lived JSON key); build and push
-  image tagged with the commit SHA (+ `latest`); then
+  image tagged with the commit SHA (no `latest`: retagging needs a broader
+  Artifact Registry role than the deployer has); then
   `gcloud compute ssh --tunnel-through-iap` to the VM and run
   `IMAGE_TAG=<sha> docker compose pull && docker compose up -d`; poll
   `/api/health` and fail the run if it never goes green.
@@ -323,8 +324,7 @@ infra/
   runners, never on `pull_request`.
 - Rollback = run deploy with an older SHA (`workflow_dispatch` input), not by
   re-running an old run. Across a schema migration, also restore the matching
-  `pre-deploy/` backup (no downgrade migrations). `latest` only moves after the
-  new container is verified healthy.
+  `pre-deploy/` backup (no downgrade migrations).
 
 **What lives where**
 

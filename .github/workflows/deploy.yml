@@ -157,7 +157,3 @@ jobs:
           echo "deploy failed: image=${running:-none} health=${health:-none}"
           exit 1
           REMOTE
-
-      - name: Move latest to the verified image
-        if: github.event_name == 'push'
-        run: gcloud artifacts docker tags add "${IMAGE_REPO}:${TARGET_SHA}" "${IMAGE_REPO}:latest"
